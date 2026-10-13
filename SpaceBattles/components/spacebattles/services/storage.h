@@ -7,6 +7,9 @@ typedef enum {
 typedef struct {
     sb_storage_status_t status;
     bool mounted, protected_files;
+    // Last failed operation, reported once per load/save attempt. No file contents.
+    const char *last_operation, *last_path;
+    int last_errno;
 } sb_storage_t;
 // Called only after the platform mount has completed. No mounting or formatting.
 void sb_storage_load(sb_storage_t *storage, sb_config_t *config, bool mounted);

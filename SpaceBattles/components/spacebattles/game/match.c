@@ -62,38 +62,8 @@ bool sb_select(sb_match_t *m, unsigned p, uint32_t sequence, const uint8_t *cell
 }
 bool sb_match_tick(sb_match_t *m, uint64_t now, sb_random_fn random, void *context) {
     if (!m || now < m->now_ms) return false;
-    uint64_t delta = now - m->now_ms;
+    (void)random; (void)context;
     m->now_ms = now;
-    if (m->paused) {
-        /* Shift deployment origin to exclude explicit single-player pause. */
-        m->phase_started_ms += delta;
-        return true;
-    }
-    if (m->phase == SB_FINISHED) return true;
-    if (m->phase == SB_DEPLOYMENT) {
-        if (m->spec.deployment_ms && now - m->phase_started_ms >= m->spec.deployment_ms) {
-            for (unsigned p = 0; p < 2; ++p) {
-                if (m->ready[p]) continue;
-                sb_completion_t result;
-                if (!sb_complete(&m->fleets[p], SB_PLACEMENT_BUDGET, random, context, &result)) return false;
-                m->replaced[p] = result == SB_REPLACED;
-                m->ready[p] = m->fleets[p].locked = true;
-            }
-            sb_begin_combat(m);
-        }
-        return true;
-    }
-    if (m->spec.match_ms) {
-        uint64_t remaining = m->spec.match_ms - m->combat_elapsed_ms;
-        m->combat_elapsed_ms += delta < remaining ? delta : remaining;
-        m->clock_expired = m->combat_elapsed_ms == m->spec.match_ms;
-    }
-    if (m->phase == SB_TARGETING && (m->clock_expired ||
-        (m->spec.selection_ms && now - m->phase_started_ms >= m->spec.selection_ms))) {
-        m->salvo_locked[0] = m->salvo_locked[1] = true;
-        m->phase = SB_LOCKED;
-    }
-    if (m->phase == SB_PRESENTING && m->clock_expired) sb_check_result(m);
     return true;
 }
 bool sb_match_pause(sb_match_t *m, bool paused, uint64_t now) {
@@ -113,12 +83,59 @@ bool sb_match_advance(sb_match_t *m, uint32_t sequence) {
 bool sb_match_surrender(sb_match_t *m, unsigned p) {
     if (!m || p > 1 || m->phase == SB_FINISHED) return false;
     m->outcome = p ? SB_WIN_A : SB_WIN_B;
+    m->end_reason = p ? SB_END_SURRENDER_B : SB_END_SURRENDER_A;
+    m->record.outcome = m->outcome; m->record.end_reason = m->end_reason;
     m->phase = SB_FINISHED;
+    return true;
+}
+bool sb_match_leave(sb_match_t *m, unsigned p) {
+    if(!sb_match_surrender(m,p)) return false;
+    m->end_reason=p ? SB_END_LEFT_B : SB_END_LEFT_A;
+    m->record.end_reason=m->end_reason;
     return true;
 }
 bool sb_match_abandon(sb_match_t *m) {
     if (!m || m->phase == SB_FINISHED) return false;
     m->outcome = SB_ABANDONED;
+    m->end_reason = SB_END_ABORTED;
+    m->record.outcome=m->outcome; m->record.end_reason=m->end_reason;
     m->phase = SB_FINISHED;
     return true;
+}
+
+/* Canonical outcome/reason validation is also the network trust boundary. */
+bool sb_result_valid(sb_outcome_t o, sb_end_reason_t r) {
+    switch(r) {
+        case SB_END_NONE: return o==SB_ONGOING;
+        case SB_END_COMBAT: return o==SB_WIN_A || o==SB_WIN_B || o==SB_DRAW;
+        case SB_END_SURRENDER_A: case SB_END_LEFT_A: return o==SB_WIN_B;
+        case SB_END_SURRENDER_B: case SB_END_LEFT_B: return o==SB_WIN_A;
+        case SB_END_ABORTED: return o==SB_ABANDONED;
+        default: return false;
+    }
+}
+sb_result_t sb_result_for(sb_outcome_t o, sb_end_reason_t r, unsigned p) {
+    if(p>1 || !sb_result_valid(o,r)) return SB_RESULT_ABORTED;
+    if(o==SB_ONGOING) return SB_RESULT_ONGOING;
+    if(o==SB_ABANDONED) return SB_RESULT_ABORTED;
+    if(o==SB_DRAW) return SB_RESULT_DRAW;
+    bool won=o==(p ? SB_WIN_B : SB_WIN_A);
+    if(r==SB_END_SURRENDER_A || r==SB_END_SURRENDER_B)
+        return won ? SB_RESULT_OPPONENT_SURRENDERED : SB_RESULT_SURRENDERED;
+    if(r==SB_END_LEFT_A || r==SB_END_LEFT_B)
+        return won ? SB_RESULT_OPPONENT_LEFT : SB_RESULT_LEFT;
+    return won ? SB_RESULT_VICTORY : SB_RESULT_DEFEAT;
+}
+const char *sb_result_message(sb_result_t r) {
+    switch(r) {
+        case SB_RESULT_ONGOING: return "Match in progress";
+        case SB_RESULT_VICTORY: return "You win";
+        case SB_RESULT_DEFEAT: return "You lose";
+        case SB_RESULT_DRAW: return "Draw";
+        case SB_RESULT_SURRENDERED: return "You surrendered - you lose";
+        case SB_RESULT_OPPONENT_SURRENDERED: return "Opponent surrendered - you win";
+        case SB_RESULT_LEFT: return "You abandoned - you lose";
+        case SB_RESULT_OPPONENT_LEFT: return "Opponent abandoned - you win";
+        default: return "Match abandoned - no winner";
+    }
 }

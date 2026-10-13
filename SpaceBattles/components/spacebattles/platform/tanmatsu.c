@@ -41,7 +41,7 @@ static bool IRAM_ATTR transfer_complete(esp_lcd_panel_handle_t handle,
 esp_err_t sb_platform_init(void) {
     esp_chip_info_t chip;
     esp_chip_info(&chip);
-    ESP_LOGI("M0a", "IDF=%s chip_revision=%u fault=%s", esp_get_idf_version(),
+    ESP_LOGD("M0a", "IDF=%s chip_revision=%u fault=%s", esp_get_idf_version(),
              chip.revision, SB_VALIDATION_NAME);
     ESP_LOGI("M0a", "app=%s version=%s", esp_app_get_description()->project_name,
              esp_app_get_description()->version);
@@ -50,14 +50,14 @@ esp_err_t sb_platform_init(void) {
     };
     // BSP owns GPIO ISR and subsystem setup. Any partial error remains fatal.
     esp_err_t err = bsp_device_initialize(&config);
-    ESP_LOGI("M0a", "BSP result: %s", esp_err_to_name(err));
+    if (err != ESP_OK) ESP_LOGE("Platform", "BSP initialization failed: %s", esp_err_to_name(err));
     if (err == ESP_OK) {
         tanmatsu_coprocessor_handle_t coprocessor;
         uint16_t version;
         esp_err_t version_err = bsp_tanmatsu_coprocessor_get_handle(&coprocessor);
         if (version_err == ESP_OK)
             version_err = tanmatsu_coprocessor_get_firmware_version(coprocessor, &version);
-        if (version_err == ESP_OK) ESP_LOGI("M0a", "coprocessor firmware=%u", version);
+        if (version_err == ESP_OK) ESP_LOGD("M0a", "coprocessor firmware=%u", version);
         else ESP_LOGW("M0a", "coprocessor version unavailable: %s", esp_err_to_name(version_err));
     }
     return err;
@@ -106,7 +106,7 @@ esp_err_t sb_platform_present(const void *pixels) {
         return ESP_ERR_TIMEOUT;
     }
     transfer_uncertain = false;
-    if (!SB_PERFORMANCE) ESP_LOGI("M0a", "display completion confirmed in %lld us", (long long)(esp_timer_get_time() - start));
+    if (!SB_PERFORMANCE) ESP_LOGD("M0a", "display completion confirmed in %lld us", (long long)(esp_timer_get_time() - start));
     return ESP_OK;
 }
 
@@ -116,7 +116,7 @@ bool sb_platform_can_release_frame(void) {
 
 void sb_platform_exit(void) {
     // Keep the registered callback and semaphore alive until the BSP restart.
-    ESP_LOGI("SpaceBattles", "M0a: returning to launcher");
+    ESP_LOGI("SpaceBattles", "Returning to launcher");
     bsp_device_restart_to_launcher();
     // Fail closed if a future BSP unexpectedly returns; no restart loop.
     for (;;) vTaskDelay(portMAX_DELAY);

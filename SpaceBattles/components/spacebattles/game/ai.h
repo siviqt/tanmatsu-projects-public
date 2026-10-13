@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "game/game.h"
-typedef enum { SB_AI_EASY, SB_AI_NORMAL } sb_ai_difficulty_t;
+typedef enum { SB_AI_EASY, SB_AI_NORMAL, SB_AI_HARD } sb_ai_difficulty_t;
+const char *sb_ai_name(sb_ai_difficulty_t difficulty);
+sb_ai_difficulty_t sb_ai_parse(const char *name);
 /* Public knowledge only: no match/private fleet, renderer, or platform access.
  * allowance is the controller's round-start budget. Output is unique, unknown
  * cells; Classic caps it at one. Returns zero for invalid input/exhaustion. */

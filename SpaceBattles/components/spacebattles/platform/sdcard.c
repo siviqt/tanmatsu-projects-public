@@ -10,12 +10,15 @@
 #include "freertos/task.h"
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"
 #include "sdmmc_cmd.h"
+#if defined(CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE)
+#include "esp_hosted.h"
+#endif
 
 #if !defined(CONFIG_BSP_TARGET_TANMATSU)
 #error "SD wiring is validated only for the Tanmatsu target"
 #endif
-#if defined(CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE) && !defined(SB_M0B)
-#error "Shared ESP-Hosted SDMMC ownership requires separate validation before enabling"
+#if defined(CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE) && (!defined(CONFIG_ESP_HOSTED_SDIO_SLOT_1) || !defined(CONFIG_ESP_HOSTED_SDIO_RESET_SLAVE_USING_CALLBACK))
+#error "Multiplayer radio requires slot 1 and the Tanmatsu reset callback"
 #endif
 
 static QueueHandle_t requests, results;
@@ -26,11 +29,13 @@ static sdmmc_card_t *card;
 static sd_pwr_ctrl_handle_t power;
 static void *dma;
 
-#ifdef SB_M0B
-// ESP-Hosted owns the controller and slot 1 for the entire app lifetime.
-extern bool sb_radio_host_ready(void);
+#if defined(CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE)
+// ESP-Hosted's constructor claims the controller and slot 1 before app_main,
+// even before the LoRa service is opened. Radio readiness is not host ownership.
 static esp_err_t shared_host_init(void) {
-    return sb_radio_host_ready() ? ESP_OK : ESP_ERR_INVALID_STATE;
+    // Idempotent transport setup; does not connect to or configure the radio.
+    // Never call sdmmc_host_init again: IDF 6 treats that as a second allocation.
+    return esp_hosted_init();
 }
 static esp_err_t shared_slot_deinit(int slot) {
     if (slot != SDMMC_HOST_SLOT_0) return ESP_ERR_INVALID_ARG;
@@ -68,7 +73,7 @@ static esp_err_t mount_card(void) {
     if (!dma) return ESP_ERR_NO_MEM;
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.slot = SDMMC_HOST_SLOT_0;
-#ifdef SB_M0B
+#if defined(CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE)
     host.init = shared_host_init;
     host.flags |= SDMMC_HOST_FLAG_DEINIT_ARG;
     host.deinit_p = shared_slot_deinit;
@@ -89,7 +94,6 @@ static esp_err_t mount_card(void) {
         .format_if_mount_failed = false, .max_files = 4, .allocation_unit_size = 16384,
     };
     err = esp_vfs_fat_sdmmc_mount("/sd", &host, &slot, &config, &card);
-    if (err == ESP_OK) sdmmc_card_print_info(stdout, card);
     return err;
 }
 
@@ -115,7 +119,8 @@ static void sd_worker(void *unused) {
     bool mount;
     while (xQueueReceive(requests, &mount, portMAX_DELAY) == pdTRUE) {
         esp_err_t err = mount ? mount_card() : unmount_card();
-        ESP_LOGI("M0a", "SD %s result: %s", mount ? "mount" : "cleanup", esp_err_to_name(err));
+        if (err != ESP_OK) ESP_LOGW("Storage", "SD %s failed: %s", mount ? "mount" : "cleanup", esp_err_to_name(err));
+        else ESP_LOGD("Storage", "SD %s complete", mount ? "mount" : "cleanup");
         xQueueSend(results, &err, portMAX_DELAY);
     }
     vTaskDelete(NULL);
@@ -142,6 +147,7 @@ sb_sd_mount_result_t sb_platform_sd_mount(void) {
         if (requests) vQueueDelete(requests);
         if (results) vQueueDelete(results);
         requests = results = NULL;
+        ESP_LOGE("Storage", "Unable to allocate SD worker resources");
         return (sb_sd_mount_result_t){ESP_ERR_NO_MEM, false};
     }
     esp_err_t err = request(true, 8000);

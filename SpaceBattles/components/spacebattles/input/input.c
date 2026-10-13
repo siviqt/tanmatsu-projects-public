@@ -12,8 +12,8 @@ static const binding_t bindings[] = {
     NAV(RETURN, CONFIRM), NAV(SPACE_L, FIRE), NAV(SPACE_M, FIRE), NAV(SPACE_R, FIRE),
     {BSP_INPUT_SCANCODE_R, SB_ACTION_ROTATE, true},
     NAV(ESC, CANCEL), NAV(BACKSPACE, CANCEL), NAV(TAB, NEXT_PANEL),
-    NAV(F1, HELP), NAV(F2, OWN_FLEET), NAV(F3, ENEMY_VIEW), NAV(F4, PAUSE),
-    NAV(F5, RADIO_STATUS), NAV(F6, CONTEXT), NAV(HOME, HOME), NAV(END, END),
+    NAV(F1, HELP), NAV(F2, DEPLOY_ROTATE), NAV(F3, SELECT), NAV(F4, COMMIT),
+    NAV(F5, RADIO_STATUS), NAV(F6, SURRENDER), NAV(HOME, HOME), NAV(END, END),
 };
 #define BINDING_COUNT (sizeof(bindings) / sizeof(bindings[0]))
 static struct { bool held, blocked; int64_t next_repeat; } keys[BINDING_COUNT];
@@ -106,9 +106,9 @@ bool sb_input_poll(sb_input_event_t *out) {
         }
         for (size_t i = 0; i < BINDING_COUNT; ++i) {
             if(text_mode && (bindings[i].scancode || bindings[i].action==SB_ACTION_FIRE ||
-                bindings[i].action==SB_ACTION_HELP || bindings[i].action==SB_ACTION_PAUSE ||
-                bindings[i].action==SB_ACTION_CONTEXT || bindings[i].action==SB_ACTION_RADIO_STATUS ||
-                bindings[i].action==SB_ACTION_OWN_FLEET || bindings[i].action==SB_ACTION_ENEMY_VIEW)) continue;
+                bindings[i].action==SB_ACTION_HELP || bindings[i].action==SB_ACTION_COMMIT ||
+                bindings[i].action==SB_ACTION_SURRENDER || bindings[i].action==SB_ACTION_RADIO_STATUS ||
+                bindings[i].action==SB_ACTION_DEPLOY_ROTATE || bindings[i].action==SB_ACTION_SELECT)) continue;
             bool down;
             if (bindings[i].scancode) {
                 if (raw.type != INPUT_EVENT_TYPE_SCANCODE) continue;
@@ -163,7 +163,7 @@ reconcile:
 
 const char *sb_input_action_name(sb_action_t action) {
     static const char *const names[] = {"NONE", "UP", "DOWN", "LEFT", "RIGHT", "CONFIRM",
-        "FIRE / PLACE", "ROTATE", "CANCEL", "NEXT PANEL", "HELP", "OWN FLEET",
-        "ENEMY VIEW", "PAUSE", "RADIO STATUS", "CONTEXT"};
+        "FIRE / PLACE", "ROTATE", "CANCEL", "NEXT PANEL", "HELP", "DEPLOY ROTATE",
+        "SELECT", "COMMIT", "RADIO STATUS", "SURRENDER"};
     return (unsigned)action < sizeof(names)/sizeof(names[0]) ? names[action] : "UNKNOWN";
 }

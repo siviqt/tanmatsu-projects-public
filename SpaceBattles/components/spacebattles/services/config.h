@@ -4,6 +4,8 @@
 #include <stddef.h>
 
 #define SB_CONFIG_TEXT_MAX 4096
+// Save schema version, independent of application/AppFS release versions.
+// Optional keys may default; incompatible changes require explicit migration.
 #define SB_CONFIG_VERSION 1
 // Strings contain canonical INI values; callers change settings through set().
 typedef struct {
@@ -12,7 +14,9 @@ typedef struct {
     unsigned brightness, master_volume, effects_volume, music_volume;
     bool reduced_animations, power_saving, targeting_confirmation, sound_enabled;
     char font_size[8], animation_quality[8], mode[8], ai_difficulty[8];
-    char callsign[17], region[8], channel[16];
+    // region is the selected profile; manual_region binds explicit confirmation to it.
+    // No current-location detector exists on this platform. Radio config is separate.
+    char callsign[17], region[8], manual_region[8], channel[16];
     char preferred_ruleset[10];
 } sb_settings_t;
 typedef struct { sb_settings_t settings; bool dirty; } sb_config_t;
@@ -24,3 +28,6 @@ sb_config_result_t sb_config_parse(sb_config_t *config, const char *text);
 bool sb_config_set(sb_config_t *config, const char *section, const char *key, const char *value);
 void sb_config_reset(sb_config_t *config);
 size_t sb_config_serialize(const sb_config_t *config, char *text, size_t capacity);
+
+// Legacy/default selections are not permission to transmit.
+bool sb_config_radio_confirmed(const sb_config_t *config);

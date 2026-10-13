@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "app/local_run.h"
+#include "app/versus_run.h"
 #include "app/local.h"
 #include "app/menu.h"
 #include "services/preferences.h"
@@ -19,7 +20,7 @@ static esp_err_t draw(const sb_local_t *s) {
     bool single=s->match.spec.play_type==SB_SINGLE_PLAYER;
     bool escalated=s->match.spec.rules.id==SB_ESCALATED;
     const char *rules=escalated ? "Escalated" : "Classic";
-    const char *difficulty=s->difficulty==SB_AI_NORMAL ? "Normal" : "Easy";
+    const char *difficulty=sb_ai_name(s->difficulty);
     static sb_ui_tactical_t v;
     if (sb_local_project(s, &v)) {
         v.footer_label = "Arrows: Move  F1: Help  Esc: Abandon";
@@ -28,20 +29,19 @@ static esp_err_t draw(const sb_local_t *s) {
                 s->match.spec.rules.lengths[s->ship], s->vertical ? "V" : "H");
             unsigned placed = 0;
             for (unsigned i=0; i<SB_SHIPS; ++i) placed += s->match.fleets[s->player].ships[i].placed;
-            if (single && escalated) snprintf(detail,sizeof(detail),"Placed %u/5 | %us left",placed,v.seconds_remaining);
-            else if(single) snprintf(detail,sizeof(detail),"%u/5 | %s starts",placed,s->match.spec.starter ? "AI" : "You");
+            if(single && !escalated) snprintf(detail,sizeof(detail),"%u/5 | %s starts",placed,s->match.spec.starter ? "AI" : "You");
             else snprintf(detail, sizeof(detail), "Placed %u/5", placed);
             if(single && !escalated) snprintf(phase,sizeof(phase),"%s starts combat",s->match.spec.starter ? "AI" : "You");
             v.sequence_label = "DEPLOYMENT";
             v.phase_label = phase;
             v.action_label = "Space: Place";
             v.detail_label = s->notice[0] ? s->notice : v.placement_valid ? detail : "Overlap - move ship";
-            v.footer_label = "R: Rotate  Tab: Ship  Enter: Ready  F4: Settings";
+            v.footer_label = "R: Rotate  Tab: Ship  Enter: Ready  Esc: Settings";
         } else if (s->screen == SB_LOCAL_RESULT) {
             v.phase_label = escalated ? "ROUND RESOLVED" : s->match.record.count > 1 ? "SHIP DESTROYED" :
                 s->match.record.events[0].hit ? "HIT" : "MISS";
-            snprintf(phase, sizeof(phase), "%s in %u...",
-                !single && escalated && s->result_seen!=3 ? "Pass device" : s->match.phase == SB_FINISHED ? "Match result" : escalated ? "Next round" : single ? "Next turn" : "Next player", s->result_seconds);
+            snprintf(phase, sizeof(phase), "%s",
+                !single && escalated && s->result_seen!=3 ? "Pass device" : s->match.phase == SB_FINISHED ? "Match result" : escalated ? "Next round" : single ? "Next turn" : "Next player");
             v.action_label = phase;
             if (escalated) {
                 unsigned outgoing=0,incoming=0;
@@ -56,10 +56,10 @@ static esp_err_t draw(const sb_local_t *s) {
             } else v.detail_label = single && s->match.actor==1 ? "AI shot resolved" : "Shot resolved";
             v.footer_label = "Result display - controls locked";
         } else {
-            v.action_label = escalated ? "Enter: Complete turn" : s->own ? "F3: Targets" : "Enter: Fire";
+            v.action_label = escalated ? "Enter: Complete turn" : "F4 / Enter: Fire";
             snprintf(detail, sizeof(detail), "Fleet %u/5 | HP %u/17", sb_alive(&s->match.fleets[s->player]), sb_intact(&s->match.fleets[s->player]));
             v.detail_label = s->notice[0] ? s->notice : detail;
-            v.footer_label = escalated ? "Space: Select  Enter: Complete  F4: Settings" : "Enter: Fire  F2/F3: View  F1: Help  F4: Settings";
+            v.footer_label = escalated ? "Space: Select  Enter: Complete  Esc: Settings" : "Enter: Fire  F3: Select  F1: Help  Esc: Settings";
         }
         return sb_renderer_tactical(&v);
     }
@@ -69,42 +69,59 @@ static esp_err_t draw(const sb_local_t *s) {
     snprintf(vmenu.subtitle,sizeof(vmenu.subtitle),"%s",single ? difficulty : "Player A / Player B");
     snprintf(vmenu.footer,sizeof(vmenu.footer),"Enter: Confirm   Esc: Return");
     switch (s->screen) {
+        case SB_LOCAL_SURRENDER:
+            vmenu.surface=SB_MENU_SURFACE_DIALOG; vmenu.tone=SB_TONE_ERROR;
+            snprintf(vmenu.title,sizeof(vmenu.title),"Surrender?");
+            vmenu.subtitle[0]=0;
+            snprintf(vmenu.rows[0],96,"Your opponent wins."); vmenu.count=1;
+            snprintf(vmenu.footer,sizeof(vmenu.footer),"Enter: Confirm surrender   Esc: Return"); break;
         case SB_LOCAL_START:
             snprintf(vmenu.rows[0],96,"Five ships: 5, 4, 3, 3, 2 / 17 squares");
-            if(escalated) snprintf(vmenu.rows[1],96,"%s",single ? "60s deployment / 10-minute combat / salvos" : "Private salvos / resolve together / untimed");
-            else if(single) snprintf(vmenu.rows[1],96,"%s starts / one shot per turn / untimed",s->match.spec.starter ? "AI" : "You");
+            if(escalated) snprintf(vmenu.rows[1],96,"%s",single ? "Simultaneous salvos" : "Private salvos / resolve together");
+            else if(single) snprintf(vmenu.rows[1],96,"%s starts / one shot per turn",s->match.spec.starter ? "AI" : "You");
             else snprintf(vmenu.rows[1],96,"Player %c starts combat / deployment: A then B",'A'+s->match.spec.starter);
-            snprintf(vmenu.rows[2],96,"%s",single ? "Enter: Begin deployment" : "Enter: Begin private deployment");
-            snprintf(vmenu.rows[3],96,"F1: Help   F4: Settings   Esc: Match menu");
-            vmenu.count=4; break;
+            snprintf(vmenu.footer,sizeof(vmenu.footer),"Enter: Begin deployment   Esc: Match menu");
+            vmenu.count=2; vmenu.key_mask=1; break;
         case SB_LOCAL_COVER:
+            vmenu.surface=SB_MENU_SURFACE_DIALOG;
             if(s->review_result) {
                 snprintf(vmenu.title,sizeof(vmenu.title),"Player %c / Round results",'A'+s->player);
                 snprintf(vmenu.rows[0],96,"Pass the device to Player %c.",'A'+s->player);
                 snprintf(vmenu.rows[1],96,"Your fleet and outgoing shots remain private.");
                 snprintf(vmenu.footer,sizeof(vmenu.footer),"%s","Press Space to view results");
-                vmenu.count=2; vmenu.key_mask=9; break;
+                vmenu.count=2; vmenu.key_mask=1; break;
             }
             return sb_renderer_handover_match(s->player==1,s->match.phase==SB_DEPLOYMENT,s->presses!=0,s->match.spec.starter);
         case SB_LOCAL_EXIT:
-            snprintf(vmenu.subtitle,sizeof(vmenu.subtitle),"%s",single ? "Paused / Match menu" : "Match menu");
-            vmenu.selectable=true; vmenu.selected=s->menu_row; vmenu.key_mask=9;
+            vmenu.surface=SB_MENU_SURFACE_MATCH;
+            snprintf(vmenu.subtitle,sizeof(vmenu.subtitle),"%s",single ? "Paused" : "Shared device");
+            vmenu.selectable=true; vmenu.selected=s->menu_row; vmenu.key_mask=1;
             snprintf(vmenu.rows[0],96,"Resume"); snprintf(vmenu.rows[1],96,"Settings");
             snprintf(vmenu.rows[2],96,"Help");
             vmenu.count=3;
-            if(!single) snprintf(vmenu.rows[vmenu.count++],96,"Surrender - opponent wins");
+            snprintf(vmenu.rows[vmenu.count++],96,"%s",s->match.salvo_locked[s->player] ? "Surrender unavailable after submission" : "Surrender - opponent wins");
+            if(s->match.salvo_locked[s->player]) vmenu.disabled_rows=1u<<3;
             snprintf(vmenu.rows[vmenu.count++],96,"Abandon - no winner");
             snprintf(vmenu.footer,sizeof(vmenu.footer),"Up/Down: Choose   Enter: Select   Esc: Resume"); break;
         case SB_LOCAL_PAUSED:
             snprintf(vmenu.rows[0],96,"Paused"); vmenu.count=1; break;
         default:
-            snprintf(vmenu.rows[0],96,"%s",s->match.outcome==SB_WIN_A ? (single ? "You win" : "Player A wins") :
-                s->match.outcome==SB_WIN_B ? (single ? "AI wins" : "Player B wins") : s->match.outcome==SB_DRAW ? "Draw" : "Match abandoned - no winner");
-            snprintf(vmenu.rows[1],96,"%s",s->match.clock_expired ? "Time expired: surviving ships, then intact HP." : "Match ended");
+            sb_ui_result_style(&vmenu,sb_result_for(s->match.outcome,s->match.end_reason,0));
+            if(!single && (s->match.outcome==SB_WIN_A || s->match.outcome==SB_WIN_B)) {
+                snprintf(vmenu.headline,sizeof(vmenu.headline),"Player %c wins",s->match.outcome==SB_WIN_A ? 'A' : 'B');
+                vmenu.tone=SB_TONE_SUCCESS;
+            }
+            // The heading carries the outcome; keep only a distinct end reason.
+            vmenu.count=0;
+            if(s->match.end_reason!=SB_END_NONE && s->match.end_reason!=SB_END_COMBAT) {
+                snprintf(vmenu.rows[vmenu.count++],96,"%s%s",single ? "" : "Player A: ",
+                    sb_result_message(sb_result_for(s->match.outcome,s->match.end_reason,0)));
+            }
             // Aggregate public result only; never expose fleet coordinates.
-            snprintf(vmenu.rows[2],96,"%s: %u ships / %u HP",single ? "You" : "Player A",sb_alive(&s->match.fleets[0]),sb_intact(&s->match.fleets[0]));
-            snprintf(vmenu.rows[3],96,"%s: %u ships / %u HP",single ? "AI" : "Player B",sb_alive(&s->match.fleets[1]),sb_intact(&s->match.fleets[1]));
-            snprintf(vmenu.footer,sizeof(vmenu.footer),"Enter: Rematch   Esc: Main menu"); vmenu.count=4; break;
+            snprintf(vmenu.rows[vmenu.count++],96,"%s: %u ships / %u HP",single ? "You" : "Player A",sb_alive(&s->match.fleets[0]),sb_intact(&s->match.fleets[0]));
+            snprintf(vmenu.rows[vmenu.count++],96,"%s: %u ships / %u HP",single ? "AI" : "Player B",sb_alive(&s->match.fleets[1]),sb_intact(&s->match.fleets[1]));
+            snprintf(vmenu.footer,sizeof(vmenu.footer),"Enter: Rematch   Esc: Main menu");
+            break;
     }
     return sb_renderer_menu(&vmenu);
 }
@@ -154,15 +171,15 @@ esp_err_t sb_local_run(sb_config_t *config, sb_storage_t *storage) {
             dirty=false;
         }
         sb_input_event_t event;
-        if(!sb_input_poll(&event)) { vTaskDelay(pdMS_TO_TICKS(sb_frame_interval_ms(&config->settings))+1); continue; }
+        // Input polling is independent of the visual frame-rate cap (one RTOS tick).
+        if(!sb_input_poll(&event)) { vTaskDelay(1); continue; }
         // Account for display/storage latency before resuming a paused match.
-        // A deadline transition consumes the outgoing screen's queued input.
+        // A resolver transition consumes the outgoing screen's queued input.
         if(!menu) {
             sb_local_screen_t before=session.screen;
             if(sb_local_tick(&session,esp_timer_get_time()/1000)) dirty=true;
             if(before!=session.screen) { boundary=true; continue; }
         }
-        if(!menu && session.screen==SB_LOCAL_RESULT) continue;
         if(event.phase==SB_INPUT_RELEASE && (menu || overlay || session.screen!=SB_LOCAL_COVER || event.action!=SB_ACTION_FIRE)) continue;
         if(menu || overlay) {
             sb_menu_page_t before=menus.page;
@@ -189,6 +206,11 @@ esp_err_t sb_local_run(sb_config_t *config, sb_storage_t *storage) {
                 if(session.screen==SB_LOCAL_SETTINGS) sb_local_close_settings(&session);
                 else sb_local_event(&session,(sb_input_event_t){SB_ACTION_CANCEL,SB_INPUT_PRESS});
                 overlay=false; boundary=true;
+            } else if(result==SB_MENU_START && menus.play_type==SB_VERSUS) {
+                err=sb_versus_run(config,menus.host,menus.rules,storage);
+                sb_menu_init(&menus,config,false);
+                if(err==ESP_OK && config->dirty) (void)save_settings(&menus,config,storage);
+                boundary=true;
             } else if(result==SB_MENU_START) {
                 bool started=menus.play_type==SB_SHARED_DEVICE ? sb_local_begin_shared(&session,menus.rules,false,random_word,NULL) :
                     sb_local_begin_single(&session,menus.rules,menus.difficulty,false,random_word,NULL,esp_timer_get_time()/1000);
@@ -207,8 +229,6 @@ esp_err_t sb_local_run(sb_config_t *config, sb_storage_t *storage) {
                 if(session.match.spec.play_type==SB_SINGLE_PLAYER) snprintf(session.names[0],sizeof(session.names[0]),"%s",config->settings.callsign);
                 sb_local_event(&session,(sb_input_event_t){SB_ACTION_CONFIRM,SB_INPUT_PRESS});
             }
-        } else if(event.phase==SB_INPUT_PRESS && event.action==SB_ACTION_PAUSE && sb_local_open_settings(&session)) {
-            sb_menu_init(&menus,config,true); sb_menu_settings(&menus); overlay=true; boundary=true;
         } else {
             sb_local_event(&session,event);
             if(session.screen==SB_LOCAL_SETTINGS) {
@@ -225,7 +245,7 @@ esp_err_t sb_local_run(sb_config_t *config, sb_storage_t *storage) {
         // Settings initialize only future setup; current match snapshots stay fixed.
         if(menu && menus.page==SB_MENU_MAIN) {
             menus.rules=!strcmp(config->settings.preferred_ruleset,"classic") ? SB_CLASSIC : SB_ESCALATED;
-            menus.difficulty=!strcmp(config->settings.ai_difficulty,"easy") ? SB_AI_EASY : SB_AI_NORMAL;
+            menus.difficulty=sb_ai_parse(config->settings.ai_difficulty);
         }
         dirty=true;
     }

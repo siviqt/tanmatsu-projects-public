@@ -55,10 +55,6 @@ void sb_attack(sb_match_t *m, unsigned player, uint8_t cell) {
 void sb_check_result(sb_match_t *m) {
     unsigned a = sb_alive(&m->fleets[0]), b = sb_alive(&m->fleets[1]);
     if (!a || !b) m->outcome = a ? SB_WIN_A : b ? SB_WIN_B : SB_DRAW;
-    else if (m->clock_expired) {
-        if (a == b) { a = sb_intact(&m->fleets[0]); b = sb_intact(&m->fleets[1]); }
-        m->outcome = a > b ? SB_WIN_A : b > a ? SB_WIN_B : SB_DRAW;
-    }
     if (m->outcome != SB_ONGOING) m->phase = SB_FINISHED;
 }
 bool sb_match_resolve(sb_match_t *m, uint32_t sequence, sb_record_t *record) {
@@ -73,7 +69,9 @@ bool sb_match_resolve(sb_match_t *m, uint32_t sequence, sb_record_t *record) {
     }
     m->phase = SB_PRESENTING;
     sb_check_result(m);
+    if(m->outcome!=SB_ONGOING) m->end_reason=SB_END_COMBAT;
     m->record.outcome = m->outcome;
+    m->record.end_reason = m->end_reason;
     *record = m->record;
     return true;
 }

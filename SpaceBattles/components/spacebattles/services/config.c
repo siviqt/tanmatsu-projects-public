@@ -32,8 +32,9 @@ static const field_t fields[] = {
     FIELD("gameplay", ai_difficulty, CHOICE, "easy|normal|hard"),
     FIELD("gameplay", targeting_confirmation, BOOLEAN, NULL),
     FIELD("player", callsign, CALLSIGN, NULL),
-    // Configuration only: these strings do not authorize radio transmission.
-    FIELD("radio", region, CHOICE, "EU868"),
+    // NONE fails closed; old files lack manual_region and require confirmation.
+    FIELD("radio", region, CHOICE, "NONE|EU868|US915"),
+    FIELD("radio", manual_region, CHOICE, "NONE|EU868|US915"),
     FIELD("radio", channel, CHOICE, "default"),
 };
 
@@ -45,7 +46,7 @@ void sb_config_defaults(sb_config_t *c) {
         .sound_enabled=true, .preferred_ruleset="escalated",
         .targeting_confirmation=true, .font_size="medium", .animation_quality="full",
         .mode="auto", .ai_difficulty="normal", .callsign="COMMANDER",
-        .region="EU868", .channel="default",
+        .region="NONE", .manual_region="NONE", .channel="default",
     };
 }
 
@@ -87,7 +88,10 @@ bool sb_config_set(sb_config_t *c, const char *section, const char *key, const c
                     if (!((*p>='A' && *p<='Z') || (*p>='a' && *p<='z') ||
                           (*p>='0' && *p<='9') || *p==' ' || *p=='_' || *p=='-')) return false;
             }
-            if (strcmp(dest, value)) { memcpy(dest, value, len+1); c->dirty=true; }
+            if (strcmp(dest, value)) {
+                if (f->offset==offsetof(sb_settings_t,region)) strcpy(c->settings.manual_region,"NONE");
+                memcpy(dest, value, len+1); c->dirty=true;
+            }
         }
         return true;
     }
@@ -106,7 +110,9 @@ sb_config_result_t sb_config_parse(sb_config_t *c, const char *text) {
     sb_config_defaults(c);
     if (strlen(text)>SB_CONFIG_TEXT_MAX) return SB_CONFIG_INVALID;
     char line[256], section[64]="";
-    bool version=false, invalid=false, future=false;
+    bool version=false, invalid=false, future=false, radio_invalid=false;
+    bool region_seen=false, manual_seen=false;
+    char manual_region[8]="NONE";
     while (*text) {
         size_t len = strcspn(text, "\n");
         if (len>=sizeof(line)) { invalid=true; text+=len; if (*text) ++text; continue; }
@@ -139,9 +145,23 @@ sb_config_result_t sb_config_parse(sb_config_t *c, const char *text) {
             if (!digits || v!=SB_CONFIG_VERSION || version) invalid=true;
             version=true;
         } else {
-            (void)sb_config_set(c, section, key, value);
+            if(!strcmp(section,"radio") && !strcmp(key,"manual_region")) {
+                if(manual_seen || !choice("NONE|EU868|US915",value)) radio_invalid=true;
+                else snprintf(manual_region,sizeof(manual_region),"%s",value);
+                manual_seen=true;
+            } else {
+                bool accepted=sb_config_set(c, section, key, value);
+                if(!strcmp(section,"radio") && !strcmp(key,"region")) {
+                    if(region_seen || !accepted) radio_invalid=true;
+                    region_seen=true;
+                }
+            }
         }
     }
+    if(radio_invalid) {
+        strcpy(c->settings.region,"NONE");
+        strcpy(c->settings.manual_region,"NONE");
+    } else strcpy(c->settings.manual_region,manual_region);
     c->dirty=false;
     if (future || invalid || !version) {
         sb_config_defaults(c);
@@ -153,7 +173,7 @@ sb_config_result_t sb_config_parse(sb_config_t *c, const char *text) {
 void sb_config_reset(sb_config_t *c) { sb_config_defaults(c); c->dirty=true; }
 
 size_t sb_config_serialize(const sb_config_t *c, char *text, size_t capacity) {
-    int n=snprintf(text, capacity, "[meta]\nversion=1\n");
+    int n=snprintf(text, capacity, "[meta]\nversion=%u\n", SB_CONFIG_VERSION);
     if (n<0 || (size_t)n>=capacity) return 0;
     size_t used=(size_t)n;
     const char *section="";
@@ -174,4 +194,9 @@ size_t sb_config_serialize(const sb_config_t *c, char *text, size_t capacity) {
         used+=(size_t)n;
     }
     return used;
+}
+
+bool sb_config_radio_confirmed(const sb_config_t *c) {
+    return c && (!strcmp(c->settings.region,"EU868") || !strcmp(c->settings.region,"US915")) &&
+        !strcmp(c->settings.region,c->settings.manual_region);
 }

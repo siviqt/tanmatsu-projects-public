@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "render/renderer.h"
 #include "validation/performance.h"
-#if SB_PERFORMANCE
 #include "esp_timer.h"
-#endif
 #include "render/ui.h"
 #include "platform/tanmatsu.h"
 #include "esp_heap_caps.h"
@@ -20,6 +18,12 @@ static pax_buf_t framebuffer;
 static void *pixels;
 // Cache only what was drawn into the retained framebuffer. Other screens
 // invalidate it; display ownership must be checked before any partial update.
+static bool menu_valid;
+static sb_menu_view_t last_menu;
+static struct {
+    unsigned full, partial;
+    int64_t full_us, partial_us, draw_max_us, present_max_us;
+} menu_timing;
 static bool input_valid;
 static unsigned input_x, input_y, input_panel;
 static char input_config[128], input_feedback[160], input_cursor[96];
@@ -27,16 +31,27 @@ static char input_config[128], input_feedback[160], input_cursor[96];
 // The source art stays at 800x480; PAX maps it to queried logical display dimensions.
 extern const uint8_t loading_start[] asm("_binary_loading_jpg_start");
 extern const uint8_t loading_end[] asm("_binary_loading_jpg_end");
+extern const uint8_t menu_start[] asm("_binary_menu_jpg_start");
+extern const uint8_t menu_end[] asm("_binary_menu_jpg_end");
 extern const uint8_t logoff_start[] asm("_binary_logoff_jpg_start");
 extern const uint8_t logoff_end[] asm("_binary_logoff_jpg_end");
 static pax_buf_t artwork;
 static void *art_pixels;
 static const uint8_t *cached_art;
 static bool art_disabled;
+static pax_buf_t menu_backdrop;
+static void *menu_pixels;
+static bool menu_cache_attempted;
+static int64_t menu_prepare_us;
+
+static void prepare_menu_backdrop(void);
+
 
 static bool load_art(const uint8_t *start, size_t length) {
     if (art_disabled) return false;
     if (cached_art == start) return true;
+    pax_join();
+    sb_ui_set_menu_art(NULL);
     cached_art = NULL;
     jpeg_decoder_handle_t decoder = NULL;
     const jpeg_decode_engine_cfg_t engine = {.timeout_ms = 500};
@@ -126,7 +141,7 @@ static void draw_status(const char *stage, float text_y) {
 }
 
 esp_err_t sb_renderer_loading(const char *stage, unsigned percent) {
-    input_valid = false;
+    input_valid = false; menu_valid = false;
     if (!pixels || !sb_platform_can_release_frame()) return ESP_ERR_INVALID_STATE;
     draw_art(loading_start, loading_end - loading_start);
     float w = pax_buf_get_width(&framebuffer), h = pax_buf_get_height(&framebuffer);
@@ -135,6 +150,8 @@ esp_err_t sb_renderer_loading(const char *stage, unsigned percent) {
     pax_draw_rect(&framebuffer, 0x704d8b97, 260*sx, 419*sy, 280*sx, 3*sy);
     pax_draw_rect(&framebuffer, 0xff65dafa, 260*sx, 419*sy,
                   280*sx * (percent > 100 ? 100 : percent) / 100, 3*sy);
+    // Pay the one-time composition cost during startup, before menu input begins.
+    if(percent>=100) prepare_menu_backdrop();
     return present();
 }
 
@@ -148,13 +165,14 @@ static void draw_input_cell(unsigned x, unsigned y, bool focused) {
 esp_err_t sb_renderer_input_test(const char *config_status, unsigned x, unsigned y,
                                  unsigned panel, const char *action, unsigned count, bool repeat) {
     if (!pixels || !sb_platform_can_release_frame()) return ESP_ERR_INVALID_STATE;
+    menu_valid=false;
     if (!input_valid) {
         pax_background(&framebuffer, 0xff080e20);
         pax_draw_text(&framebuffer, 0xff65dafa, pax_font_sky_mono, 28, 24, 16, "SPACEBATTLES / INPUT TEST");
         for (unsigned row = 0; row < 4; ++row) for (unsigned col = 0; col < 6; ++col)
             draw_input_cell(col, row, col == x && row == y);
         pax_draw_text(&framebuffer, 0xffdce8f8, pax_font_sky_mono, 16, 412, 86,
-                      "Arrows   Move (hold to repeat)\nEnter    Ready / fire\nSpace    Place / select\nR        Rotate\nTab      Next panel\nF1       Help\nF2 / F3  Fleet / targets\nF4       Settings / pause\nF5       Radio status\nF6       Both boards\nEsc / Backspace  Log off");
+                      "Arrows   Move (hold to repeat)\nEnter    Ready / fire\nSpace    Place / select\nR        Rotate\nTab      Next panel\nF1       Help\nF2       Rotate ship\nF3       Place / select\nF4       Ready / fire / submit\nF5       Link (LoRa)\nF6       Surrender\nEsc / Backspace  Log off");
         pax_draw_text(&framebuffer, 0xffdce8f8, pax_font_sky_mono, 14, 24, 451,
                       "M3 diagnostic: action feedback only; game and settings screens follow later.");
     } else if (x != input_x || y != input_y) {
@@ -197,12 +215,12 @@ esp_err_t sb_renderer_input_test(const char *config_status, unsigned x, unsigned
 }
 
 esp_err_t sb_renderer_ready(const char *config_status) {
-    input_valid = false;
+    input_valid = false; menu_valid = false;
     return sb_renderer_input_test(config_status, 0, 0, 0, "NONE", 0, false);
 }
 
 esp_err_t sb_renderer_exit(void) {
-    input_valid = false;
+    input_valid = false; menu_valid = false;
     if (!pixels || !sb_platform_can_release_frame()) return ESP_ERR_INVALID_STATE;
     draw_art(logoff_start, logoff_end - logoff_start);
     draw_status("RETURNING TO LAUNCHER...", 402);
@@ -210,7 +228,7 @@ esp_err_t sb_renderer_exit(void) {
 }
 
 esp_err_t sb_renderer_init(void) {
-    input_valid = false;
+    input_valid = false; menu_valid = false;
     sb_display_t display;
     esp_err_t err = sb_platform_display_init(&display);
     if (err != ESP_OK) return err;
@@ -234,19 +252,43 @@ esp_err_t sb_renderer_init(void) {
 }
 
 esp_err_t sb_renderer_message(const char *message) {
-    input_valid = false;
+    input_valid = false; menu_valid = false;
     if (!pixels || !sb_platform_can_release_frame()) return ESP_ERR_INVALID_STATE;
-    pax_background(&framebuffer, 0xff080e20);
-    sb_font_t heading = sb_font_get(font_profile, SB_FONT_HEADING);
-    sb_font_t body = sb_font_get(font_profile, SB_FONT_BODY);
-    pax_draw_text(&framebuffer, 0xff65dafa, heading.font, heading.size, 32, 40, "SPACEBATTLES");
-    pax_draw_text(&framebuffer, 0xffdce8f8, body.font, body.size, 32, 120, message);
+    sb_menu_view_t view={.surface=SB_MENU_SURFACE_STATUS,.tone=SB_TONE_PENDING};
+    snprintf(view.title,sizeof(view.title),"SPACEBATTLES");
+    const char *at=message ? message : "";
+    while(*at && view.count<SB_MENU_ROWS) {
+        const char *end=strchr(at,'\n');
+        size_t length=end ? (size_t)(end-at) : strlen(at);
+        if(length>=sizeof(view.rows[0])) length=sizeof(view.rows[0])-1;
+        memcpy(view.rows[view.count],at,length);
+        view.rows[view.count++][length]=0;
+        if(!end) break;
+        at=end+1;
+    }
+    if(!sb_ui_menu(&framebuffer,font_profile,&view)) return ESP_ERR_INVALID_SIZE;
     return present();
 }
 
 void sb_renderer_shutdown(void) {
-    input_valid = false;
+    input_valid = false; menu_valid = false;
+    // One summary on exit permits device validation without per-frame UART work.
+    if(menu_timing.full || menu_timing.partial) {
+        ESP_LOGI("GUI", "menu full=%u mean_us=%lld partial=%u mean_us=%lld draw_max_us=%lld present_max_us=%lld",
+            menu_timing.full, (long long)(menu_timing.full ? menu_timing.full_us/menu_timing.full : 0),
+            menu_timing.partial, (long long)(menu_timing.partial ? menu_timing.partial_us/menu_timing.partial : 0),
+            (long long)menu_timing.draw_max_us, (long long)menu_timing.present_max_us);
+        memset(&menu_timing,0,sizeof(menu_timing));
+    }
     pax_join();
+    sb_ui_set_menu_art(NULL);
+    sb_ui_set_menu_cache(NULL);
+    if(menu_pixels) {
+        pax_buf_destroy(&menu_backdrop);
+        heap_caps_free(menu_pixels);
+        menu_pixels=NULL;
+    }
+    menu_cache_attempted=false;
     if (art_pixels && !art_disabled) {
         pax_buf_destroy(&artwork);
         heap_caps_free(art_pixels);
@@ -257,7 +299,7 @@ void sb_renderer_shutdown(void) {
         pax_buf_destroy(&framebuffer);
         heap_caps_free(pixels);
         pixels = NULL;
-        ESP_LOGI("M0a", "application frame released after confirmed completion");
+        ESP_LOGD("M0a", "application frame released after confirmed completion");
     }
     // On uncertain transfer completion keep source memory alive until reset.
     if (pixels) ESP_LOGW("M0a", "application frame retained until restart");
@@ -265,17 +307,17 @@ void sb_renderer_shutdown(void) {
 
 void sb_renderer_set_font_profile(const char *name) {
     font_profile = sb_font_profile_parse(name);
-    input_valid = false;
+    input_valid = false; menu_valid = false;
 }
 esp_err_t sb_renderer_ui_preview(unsigned page) {
     if (!pixels || !sb_platform_can_release_frame()) return ESP_ERR_INVALID_STATE;
-    input_valid = false;
+    input_valid = false; menu_valid = false;
     if (!sb_ui_preview(&framebuffer,font_profile,page)) return ESP_ERR_INVALID_SIZE;
     return present();
 }
 esp_err_t sb_renderer_tactical_preview(unsigned page, unsigned cursor, bool enemy) {
     if (!pixels || !sb_platform_can_release_frame()) return ESP_ERR_INVALID_STATE;
-    input_valid = false;
+    input_valid = false; menu_valid = false;
     if (!sb_ui_tactical_preview(&framebuffer,font_profile,page,cursor,enemy)) return ESP_ERR_INVALID_SIZE;
     return present();
 }
@@ -285,7 +327,7 @@ esp_err_t sb_renderer_benchmark(unsigned scenario, uint64_t elapsed_us, unsigned
                                 sb_frame_sample_t *sample) {
     if (!pixels || !sample || scenario >= 4 || !sb_platform_can_release_frame())
         return ESP_ERR_INVALID_STATE;
-    input_valid = false;
+    input_valid = false; menu_valid = false;
     int64_t start = esp_timer_get_time();
     // Immutable synthetic resolved record, one Classic shot or ten round attacks.
     // Both attackers are represented; only disclosed impacts on this board draw.
@@ -327,27 +369,91 @@ esp_err_t sb_renderer_benchmark(unsigned scenario, uint64_t elapsed_us, unsigned
 
 esp_err_t sb_renderer_tactical(const sb_ui_tactical_t *view) {
     if (!pixels || !sb_platform_can_release_frame()) return ESP_ERR_INVALID_STATE;
-    input_valid = false;
-    if (!sb_ui_tactical(&framebuffer, font_profile, view)) return ESP_ERR_INVALID_SIZE;
+    input_valid = false; menu_valid = false;
+    prepare_menu_backdrop();
+    if (!sb_ui_tactical(&framebuffer, font_profile, view)) {
+        ESP_LOGE("SpaceBattles", "Tactical layout rejected: rules=%u sequence=%lu font=%u phase=%s",
+                 (unsigned)view->ruleset,(unsigned long)view->sequence,(unsigned)font_profile,
+                 view->phase_label ? view->phase_label : "unknown");
+        return ESP_ERR_INVALID_SIZE;
+    }
     return present();
 }
 esp_err_t sb_renderer_handover(bool player_b, bool deployment, bool first_press) {
     if (!pixels || !sb_platform_can_release_frame()) return ESP_ERR_INVALID_STATE;
-    input_valid = false;
+    input_valid = false; menu_valid = false;
+    prepare_menu_backdrop();
     if (!sb_ui_handover(&framebuffer, font_profile, player_b, deployment, first_press)) return ESP_ERR_INVALID_SIZE;
     return present();
+}
+
+static void prepare_menu_backdrop(void) {
+    if(!menu_cache_attempted) {
+        menu_valid=false;
+        int64_t start=esp_timer_get_time();
+        menu_cache_attempted=true;
+        bool loaded=load_art(menu_start,menu_end-menu_start);
+        sb_ui_set_menu_art(loaded ? &artwork : NULL);
+        if(loaded) {
+            menu_pixels=heap_caps_aligned_alloc(64,pax_buf_get_size(&framebuffer),
+                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if(menu_pixels && !pax_buf_init(&menu_backdrop,menu_pixels,
+                    pax_buf_get_width_raw(&framebuffer),pax_buf_get_height_raw(&framebuffer),
+                    pax_buf_get_type(&framebuffer))) {
+                heap_caps_free(menu_pixels); menu_pixels=NULL;
+            }
+            if(menu_pixels) {
+                pax_buf_reversed(&menu_backdrop,framebuffer.reverse_endianness);
+                pax_buf_set_orientation(&menu_backdrop,pax_buf_get_orientation(&framebuffer));
+                sb_ui_prepare_menu_cache(&menu_backdrop);
+                pax_join();
+            } else {
+                // Preserve responsive navigation under memory pressure; never
+                // retry allocation or full-screen composition on every keypress.
+                sb_ui_set_menu_art(NULL);
+                ESP_LOGW("GUI", "menu cache unavailable; using solid background");
+            }
+        }
+        menu_prepare_us=esp_timer_get_time()-start;
+    }
+    // Lifecycle art may detach the borrowed cache. It remains valid independently.
+    sb_ui_set_menu_cache(menu_pixels ? &menu_backdrop : NULL);
 }
 
 esp_err_t sb_renderer_menu(const sb_menu_view_t *view) {
     if (!pixels || !sb_platform_can_release_frame()) return ESP_ERR_INVALID_STATE;
     input_valid = false;
-    if (!sb_ui_menu(&framebuffer,font_profile,view)) return ESP_ERR_INVALID_SIZE;
-    return present();
+    int64_t start=esp_timer_get_time();
+    prepare_menu_backdrop();
+    int64_t prepared=esp_timer_get_time();
+    bool partial=menu_valid && sb_ui_menu_selection(&framebuffer,font_profile,&last_menu,view);
+    menu_valid=false;
+    if (!partial && !sb_ui_menu(&framebuffer,font_profile,view)) return ESP_ERR_INVALID_SIZE;
+    pax_join();
+    int64_t drawn=esp_timer_get_time();
+    esp_err_t err=present();
+    if(err==ESP_OK) { last_menu=*view; menu_valid=true; }
+    int64_t completed=esp_timer_get_time();
+    if(partial) { ++menu_timing.partial; menu_timing.partial_us+=drawn-prepared; }
+    else { ++menu_timing.full; menu_timing.full_us+=drawn-prepared; }
+    if(drawn-prepared>menu_timing.draw_max_us) menu_timing.draw_max_us=drawn-prepared;
+    if(completed-drawn>menu_timing.present_max_us) menu_timing.present_max_us=completed-drawn;
+    // Development-only timing summary; silent at the normal INFO level.
+    static unsigned frames;
+    static int64_t max_draw, max_present;
+    if(drawn-prepared>max_draw) max_draw=drawn-prepared;
+    if(completed-drawn>max_present) max_present=completed-drawn;
+    if(++frames==1 || frames%32==0) {
+        ESP_LOGD("GUI", "menu frames=%u cache=%u prep_us=%lld draw_max_us=%lld present_max_us=%lld",
+                 frames,menu_pixels!=NULL,(long long)(frames==1 ? menu_prepare_us : prepared-start),(long long)max_draw,(long long)max_present);
+        max_draw=max_present=0;
+    }
+    return err;
 }
 
 esp_err_t sb_renderer_handover_match(bool player_b, bool deployment, bool first_press, unsigned starter) {
     if (!pixels || !sb_platform_can_release_frame()) return ESP_ERR_INVALID_STATE;
-    input_valid=false;
+    input_valid=false; menu_valid=false;
     if(!sb_ui_handover(&framebuffer,font_profile,player_b,deployment,first_press)) return ESP_ERR_INVALID_SIZE;
     if(deployment) {
         char label[48]; snprintf(label,sizeof(label),"Player %c selects first.",'A'+(starter==1));

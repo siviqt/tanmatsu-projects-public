@@ -11,6 +11,7 @@ static void screen(sb_local_t *s, sb_local_screen_t next) {
 static void cover(sb_local_t *s, unsigned player) {
     s->player = player;
     s->cursor = s->ship = s->presses = s->view_mode = 0;
+    s->classic_selected=false;
     s->vertical = false;
     s->own = s->match.phase == SB_DEPLOYMENT;
     s->notice[0] = 0;
@@ -36,7 +37,7 @@ static bool single(const sb_local_t *s) { return s->match.spec.play_type == SB_S
 bool sb_local_begin_single(sb_local_t *s, sb_ruleset_t ruleset,
                            sb_ai_difficulty_t difficulty, bool rematch,
                            sb_random_fn random, void *context, uint64_t now_ms) {
-    if (!s || !random || (difficulty != SB_AI_EASY && difficulty != SB_AI_NORMAL)) return false;
+    if (!s || !random || (difficulty < SB_AI_EASY || difficulty > SB_AI_HARD)) return false;
     sb_series_t series = rematch ? s->series : (sb_series_t){0};
     uint8_t starter;
     sb_spec_t spec;
@@ -52,7 +53,6 @@ static void resolved(sb_local_t *s) {
     s->result_seen=1u<<s->player;
     s->view_mode=0;
     s->result_started = false;
-    s->result_seconds = 3;
     screen(s, SB_LOCAL_RESULT);
 }
 // This adapter owns the private match; the chooser sees only public knowledge.
@@ -75,67 +75,36 @@ static void ai_target(sb_local_t *s) {
 }
 static void single_target(sb_local_t *s) {
     s->player=0;
+    s->classic_selected=false;
     s->own=false;
     s->cursor=0;
     s->notice[0]=0;
     screen(s,SB_LOCAL_TARGET);
     ai_target(s);
 }
-static unsigned timer_seconds(const sb_local_t *s) {
-    const sb_match_t *m=&s->match;
-    if (m->spec.rules.id != SB_ESCALATED) return 0;
-    uint64_t remaining;
-    if (m->phase == SB_DEPLOYMENT) {
-        uint64_t elapsed=m->now_ms-m->phase_started_ms;
-        remaining=elapsed<m->spec.deployment_ms ? m->spec.deployment_ms-elapsed : 0;
-    } else remaining=m->spec.match_ms-m->combat_elapsed_ms;
-    return (unsigned)((remaining+999)/1000);
-}
 static void fire(sb_local_t *s) {
-    if (!sb_classic_fire(&s->match, s->player, s->match.sequence, s->cursor)) return;
+    if (!s->classic_selected || !sb_classic_fire(&s->match, s->player, s->match.sequence, s->classic_target)) return;
+    s->cursor=s->classic_target;
     resolved(s);
 }
 void sb_local_presented(sb_local_t *s, uint64_t now_ms) {
-    if (s && s->screen == SB_LOCAL_RESULT && !s->result_started) {
-        s->result_started = true;
-        s->result_started_ms = now_ms;
-    }
+    (void)now_ms;
+    if(s && s->screen==SB_LOCAL_RESULT) s->result_started=true;
 }
 bool sb_local_tick(sb_local_t *s, uint64_t now_ms) {
-    if (!s) return false;
-    bool changed=false;
-    if (single(s) && s->screen == SB_LOCAL_START && now_ms >= s->match.now_ms) {
-        s->match.now_ms=now_ms; s->match.phase_started_ms=now_ms;
+    if(!s) return false;
+    if(single(s)) sb_match_tick(&s->match,now_ms,s->random,s->random_context);
+    if(s->match.phase==SB_LOCKED && s->screen!=SB_LOCAL_RESULT) { resolved(s); return true; }
+    return false;
+}
+static void continue_result(sb_local_t *s) {
+    if(!s->result_started) return;
+    if(!single(s) && s->match.spec.rules.id==SB_ESCALATED && s->result_seen!=3) {
+        cover(s,1-s->player); s->review_result=true;
+    } else if(s->match.phase==SB_FINISHED) screen(s,SB_LOCAL_FINISHED);
+    else if(sb_match_advance(&s->match,s->match.sequence)) {
+        if(single(s)) single_target(s); else cover(s,s->match.actor);
     }
-    if (single(s) && s->screen != SB_LOCAL_START) {
-        sb_phase_t before=s->match.phase;
-        sb_match_tick(&s->match,now_ms,s->random,s->random_context);
-        unsigned seconds=timer_seconds(s);
-        changed=seconds!=s->timer_seconds;
-        s->timer_seconds=seconds;
-        if (before == SB_DEPLOYMENT && s->match.phase == SB_TARGETING) {
-            snprintf(s->notice,sizeof(s->notice),"%s",s->match.replaced[0] ? "Deadline: fleet replaced" : "Deadline: fleet completed");
-            single_target(s);
-            changed=true;
-        }
-        if (s->match.phase == SB_LOCKED) { resolved(s); changed=true; }
-    }
-    if (s->screen != SB_LOCAL_RESULT || !s->result_started || now_ms < s->result_started_ms) return changed;
-    uint64_t elapsed = now_ms - s->result_started_ms;
-    if (elapsed >= 3000) {
-        if (!single(s) && s->match.spec.rules.id==SB_ESCALATED && s->result_seen!=3) {
-            cover(s,1-s->player);
-            s->review_result=true;
-        } else if (s->match.phase == SB_FINISHED) screen(s, SB_LOCAL_FINISHED);
-        else if (sb_match_advance(&s->match, s->match.sequence)) {
-            if (single(s)) single_target(s); else cover(s, s->match.actor);
-        }
-        return true;
-    }
-    unsigned seconds = 3 - (unsigned)(elapsed / 1000);
-    if (seconds == s->result_seconds) return changed;
-    s->result_seconds = seconds;
-    return true;
 }
 static void next_ship(sb_local_t *s) {
     s->ship = (s->ship + 1) % SB_SHIPS;
@@ -172,14 +141,43 @@ void sb_local_close_settings(sb_local_t *s) {
     screen(s,s->settings_return);
 }
 void sb_local_event(sb_local_t *s, sb_input_event_t e) {
-    if (!s || s->screen == SB_LOCAL_RESULT || s->screen == SB_LOCAL_SETTINGS) return;
+    if (!s || s->screen == SB_LOCAL_SETTINGS) return;
+    if(s->screen==SB_LOCAL_RESULT) {
+        if(e.phase==SB_INPUT_PRESS && (e.action==SB_ACTION_CONFIRM || e.action==SB_ACTION_COMMIT)) continue_result(s);
+        return;
+    }
+    if(s->screen==SB_LOCAL_SURRENDER) {
+        if(e.phase!=SB_INPUT_PRESS) return;
+        if(e.action==SB_ACTION_CANCEL) screen(s,s->surrender_return);
+        else if(e.action==SB_ACTION_CONFIRM && sb_match_surrender(&s->match,s->player)) screen(s,SB_LOCAL_FINISHED);
+        return;
+    }
+    if(s->screen==SB_LOCAL_DEPLOY || s->screen==SB_LOCAL_TARGET) {
+        sb_ui_tactical_t view;
+        if(!sb_local_project(s,&view)) return;
+        unsigned mask=sb_ui_tactical_keys(&view), bit=0;
+        if(e.action==SB_ACTION_HELP) bit=1;
+        if(e.action==SB_ACTION_DEPLOY_ROTATE) bit=2;
+        if(e.action==SB_ACTION_SELECT) bit=4;
+        if(e.action==SB_ACTION_COMMIT) bit=8;
+        if(e.action==SB_ACTION_RADIO_STATUS) bit=16;
+        if(e.action==SB_ACTION_SURRENDER) bit=32;
+        if(bit && !(mask&bit)) return;
+        if(e.action==SB_ACTION_SURRENDER && e.phase==SB_INPUT_PRESS) {
+            s->surrender_return=s->screen; screen(s,SB_LOCAL_SURRENDER); return;
+        }
+        if(e.action==SB_ACTION_DEPLOY_ROTATE) e.action=SB_ACTION_ROTATE;
+        if(e.action==SB_ACTION_SELECT) e.action=SB_ACTION_FIRE;
+        if(e.action==SB_ACTION_COMMIT) e.action=SB_ACTION_CONFIRM;
+    } else if(e.action==SB_ACTION_COMMIT || e.action==SB_ACTION_DEPLOY_ROTATE ||
+              e.action==SB_ACTION_SELECT || e.action==SB_ACTION_SURRENDER || e.action==SB_ACTION_RADIO_STATUS) return;
     if (s->screen == SB_LOCAL_COVER && e.action == SB_ACTION_FIRE) {
         if(e.phase == SB_INPUT_PRESS) {
             // The screen boundary resets input and blocks held Space until release.
             // Consume this press here; it must never reach placement/targeting.
             if(s->review_result) {
                 s->review_result=false; s->result_seen|=1u<<s->player;
-                s->result_started=false; s->result_seconds=3;
+                s->result_started=false;
                 screen(s,SB_LOCAL_RESULT);
             } else screen(s,s->match.phase==SB_DEPLOYMENT ? SB_LOCAL_DEPLOY : SB_LOCAL_TARGET);
         }
@@ -190,7 +188,7 @@ void sb_local_event(sb_local_t *s, sb_input_event_t e) {
     if (s->screen == SB_LOCAL_HELP || s->screen == SB_LOCAL_EXIT || s->screen == SB_LOCAL_PAUSED) {
         if (e.phase != SB_INPUT_PRESS) return;
         if(s->screen==SB_LOCAL_EXIT && (e.action==SB_ACTION_UP || e.action==SB_ACTION_DOWN)) {
-            unsigned count=single(s) ? 4 : 5;
+            unsigned count=5;
             s->menu_row=(s->menu_row+(e.action==SB_ACTION_UP ? count-1 : 1))%count;
         } else if(s->screen==SB_LOCAL_EXIT && e.action==SB_ACTION_CONFIRM && s->menu_row==1) {
             sb_local_open_settings(s);
@@ -198,23 +196,18 @@ void sb_local_event(sb_local_t *s, sb_input_event_t e) {
             s->help_return=SB_LOCAL_EXIT;
             screen(s,SB_LOCAL_HELP);
         } else if(s->screen==SB_LOCAL_EXIT && e.action==SB_ACTION_CONFIRM && s->menu_row>=3) {
-            if(!single(s) && s->menu_row==3) sb_match_surrender(&s->match,s->player);
-            else sb_match_abandon(&s->match);
-            screen(s,SB_LOCAL_FINISHED);
+            if(s->menu_row==3) {
+                if(s->match.salvo_locked[s->player]) return;
+                s->surrender_return=SB_LOCAL_EXIT; screen(s,SB_LOCAL_SURRENDER);
+            } else { sb_match_abandon(&s->match); screen(s,SB_LOCAL_FINISHED); }
         } else if(e.action==SB_ACTION_CANCEL || (s->screen==SB_LOCAL_EXIT && e.action==SB_ACTION_CONFIRM) ||
                   (s->screen==SB_LOCAL_HELP && e.action==SB_ACTION_HELP) ||
-                  (s->screen==SB_LOCAL_PAUSED && e.action==SB_ACTION_PAUSE)) {
+                  (s->screen==SB_LOCAL_PAUSED && e.action==SB_ACTION_COMMIT)) {
             sb_local_screen_t next=s->screen==SB_LOCAL_HELP ? s->help_return : s->resume;
             if(single(s) && next!=SB_LOCAL_EXIT) sb_match_pause(&s->match,false,s->match.now_ms);
             s->presses=0;
             screen(s,next);
         }
-        return;
-    }
-    if (single(s) && e.phase == SB_INPUT_PRESS && e.action == SB_ACTION_PAUSE && s->screen != SB_LOCAL_START) {
-        s->resume=s->screen;
-        sb_match_pause(&s->match,true,s->match.now_ms);
-        screen(s,SB_LOCAL_PAUSED);
         return;
     }
     if (e.phase == SB_INPUT_PRESS && e.action == SB_ACTION_HELP) {
@@ -277,9 +270,7 @@ void sb_local_event(sb_local_t *s, sb_input_event_t e) {
             else snprintf(s->notice, sizeof(s->notice), "Place all five ships first");
         }
     } else if (s->screen == SB_LOCAL_TARGET) {
-        if (e.action == SB_ACTION_OWN_FLEET) { s->own=true; s->view_mode=1; }
-        if (e.action == SB_ACTION_ENEMY_VIEW) { s->own=false; s->view_mode=2; }
-        if (e.action == SB_ACTION_CONTEXT) { s->own=false; s->view_mode=0; }
+
         if (s->match.spec.rules.id == SB_ESCALATED) {
             if (!s->own && e.action == SB_ACTION_FIRE) {
                 uint8_t cells[SB_SALVO];
@@ -300,11 +291,11 @@ void sb_local_event(sb_local_t *s, sb_input_event_t e) {
             }
             return;
         }
-        if (!s->own && e.action == SB_ACTION_CONFIRM) {
-            if (s->match.knowledge[s->player].cells[s->cursor] != SB_UNKNOWN)
-                snprintf(s->notice, sizeof(s->notice), "Already targeted");
-            else fire(s);
+        if(e.action==SB_ACTION_FIRE && s->match.knowledge[s->player].cells[s->cursor]==SB_UNKNOWN) {
+            if(s->classic_selected && s->classic_target==s->cursor) s->classic_selected=false;
+            else { s->classic_selected=true; s->classic_target=s->cursor; }
         }
+        if(e.action==SB_ACTION_CONFIRM) fire(s);
     }
 }
 bool sb_local_project(const sb_local_t *s, sb_ui_tactical_t *v) {
@@ -315,12 +306,21 @@ bool sb_local_project(const sb_local_t *s, sb_ui_tactical_t *v) {
     *v = (sb_ui_tactical_t){.ruleset=s->match.spec.rules.id, .play_type=single(s) ? SB_UI_SINGLE_PLAYER : SB_UI_SHARED_DEVICE,
         .own_board=own, .active=!single(s) || s->match.spec.rules.id==SB_ESCALATED || s->match.actor==0, .player_b=s->player==1,
         .sequence=s->match.sequence, .cursor=s->cursor, .available=s->match.phase==SB_TARGETING ? sb_allowance(&s->match,s->player) : s->match.allowance[s->player],
-        .selected=s->match.selected[s->player], .seconds_remaining=timer_seconds(s)};
+        .selected=s->match.selected[s->player], .can_surrender=s->match.phase!=SB_FINISHED && !s->match.salvo_locked[s->player]};
     v->notice=s->notice;
+    v->owner_turn=s->match.actor==s->player;
     v->dual=s->screen!=SB_LOCAL_DEPLOY;
     v->result=s->screen==SB_LOCAL_RESULT;
-    v->view_mode=s->view_mode;
+    v->view_mode=0;
+    if(s->match.spec.rules.id==SB_CLASSIC && s->screen==SB_LOCAL_TARGET) {
+        v->selected=s->classic_selected;
+        if(s->classic_selected) v->targets[s->classic_target]=true;
+    }
     v->owner_name=s->names[s->player]; v->target_name=s->names[1-s->player];
+    for(unsigned i=0;i<SB_SHIPS;i++) if(s->match.fleets[s->player].ships[i].placed) {
+        v->ships[i].length=s->match.spec.rules.lengths[i];
+        memcpy(v->ships[i].cells,s->match.fleets[s->player].ships[i].cells,v->ships[i].length);
+    }
     if(v->dual) {
         memcpy(v->fleet_cells,s->match.knowledge[1-s->player].cells,sizeof(v->fleet_cells));
         memcpy(v->target_cells,s->match.knowledge[s->player].cells,sizeof(v->target_cells));

@@ -44,7 +44,7 @@ void spacebattles_run(void) {
     if (err == ESP_OK) {
         sb_storage_load(&storage, &config, sd_available);
         ESP_LOGI("M2", "%s", sb_storage_status_text(&storage));
-        ESP_LOGI("M2", "Settings: brightness=%u mode=%s master_volume=%u dirty=%d",
+        ESP_LOGD("M2", "Settings: brightness=%u mode=%s master_volume=%u dirty=%d",
                  config.settings.brightness, config.settings.mode,
                  config.settings.master_volume, config.dirty);
     }
@@ -54,7 +54,6 @@ void spacebattles_run(void) {
     }
     if (err == ESP_OK) {
         wait_until(splash_visible_until);
-        ESP_LOGI("M1", "startup splash minimum 3000 ms elapsed");
         sb_input_reset();
 #if SB_PERFORMANCE
         err = sb_performance_run();
@@ -100,16 +99,16 @@ void spacebattles_run(void) {
                     continue;
                 }
                 if (event.phase != SB_INPUT_PRESS) continue;
-                if (event.action == SB_ACTION_PAUSE) {
+                if (event.action == SB_ACTION_COMMIT) {
                     sb_font_profile_t profile = sb_font_profile_parse(config.settings.font_size);
                     const char *name = sb_font_profile_name((profile+1)%SB_FONT_PROFILE_COUNT);
                     sb_config_set(&config,"display","font_size",name);
                     sb_renderer_set_font_profile(name);
-                } else if (event.action == SB_ACTION_CONTEXT) {
+                } else if (event.action == SB_ACTION_SURRENDER) {
                     page = (page+1)%SB_TACTICAL_PREVIEW_PAGES;
-                } else if (page < 4 && (event.action == SB_ACTION_OWN_FLEET ||
-                           event.action == SB_ACTION_ENEMY_VIEW || event.action == SB_ACTION_NEXT_PANEL)) {
-                    enemy = event.action == SB_ACTION_NEXT_PANEL ? !enemy : event.action == SB_ACTION_ENEMY_VIEW;
+                } else if (page < 4 && (event.action == SB_ACTION_DEPLOY_ROTATE ||
+                           event.action == SB_ACTION_SELECT || event.action == SB_ACTION_NEXT_PANEL)) {
+                    enemy = event.action == SB_ACTION_NEXT_PANEL ? !enemy : event.action == SB_ACTION_SELECT;
                 } else continue;
                 ++batch;
                 sb_input_reset();
@@ -123,7 +122,7 @@ void spacebattles_run(void) {
             }
             int64_t render_start = esp_timer_get_time();
             err = sb_renderer_tactical_preview(page,cursor,enemy);
-            ESP_LOGI("M6", "page=%u font=%s action=%s input_us=%lld render_us=%lld",
+            ESP_LOGD("M6", "page=%u font=%s action=%s input_us=%lld render_us=%lld",
                      page, config.settings.font_size, sb_input_action_name(event.action),
                      (long long)input_us, (long long)(esp_timer_get_time() - render_start));
             if (err != ESP_OK) {
@@ -141,15 +140,14 @@ void spacebattles_run(void) {
         // Start only after confirmed presentation. Cleanup counts toward the
         // owner's minimum three-second visibility requirement.
         if (exit_err == ESP_OK) exit_visible_until = esp_timer_get_time() + 3000000;
-        ESP_LOGI("M1", "exit screen: %s", esp_err_to_name(exit_err));
+        if (exit_err != ESP_OK) ESP_LOGE("Display", "Exit screen failed: %s", esp_err_to_name(exit_err));
     }
     if (!sb_storage_save(&storage, &config)) {
         ESP_LOGE("M2", "Configuration save failed; session changes remain unsaved");
     }
     esp_err_t cleanup_err = sb_platform_sd_shutdown();
-    ESP_LOGI("M1", "storage shutdown: %s", esp_err_to_name(cleanup_err));
+    if (cleanup_err != ESP_OK) ESP_LOGE("Storage", "Shutdown failed: %s", esp_err_to_name(cleanup_err));
     wait_until(exit_visible_until);
-    if (exit_visible_until) ESP_LOGI("M1", "exit screen minimum 3000 ms elapsed");
     sb_renderer_shutdown();
     sb_platform_exit();
 }

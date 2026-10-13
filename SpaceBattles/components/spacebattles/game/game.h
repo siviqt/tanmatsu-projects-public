@@ -16,6 +16,14 @@ typedef enum { SB_CLASSIC = 1, SB_ESCALATED = 2 } sb_ruleset_t;
 typedef enum { SB_SINGLE_PLAYER, SB_VERSUS, SB_SHARED_DEVICE } sb_play_type_t;
 typedef enum { SB_DEPLOYMENT, SB_TARGETING, SB_LOCKED, SB_PRESENTING, SB_FINISHED } sb_phase_t;
 typedef enum { SB_ONGOING, SB_WIN_A, SB_WIN_B, SB_DRAW, SB_ABANDONED } sb_outcome_t;
+typedef enum { SB_END_NONE, SB_END_COMBAT, SB_END_SURRENDER_A, SB_END_SURRENDER_B,
+    SB_END_LEFT_A, SB_END_LEFT_B, SB_END_ABORTED } sb_end_reason_t;
+typedef enum { SB_RESULT_ONGOING, SB_RESULT_VICTORY, SB_RESULT_DEFEAT, SB_RESULT_DRAW,
+    SB_RESULT_SURRENDERED, SB_RESULT_OPPONENT_SURRENDERED, SB_RESULT_LEFT,
+    SB_RESULT_OPPONENT_LEFT, SB_RESULT_ABORTED } sb_result_t;
+bool sb_result_valid(sb_outcome_t outcome, sb_end_reason_t reason);
+sb_result_t sb_result_for(sb_outcome_t outcome, sb_end_reason_t reason, unsigned player);
+const char *sb_result_message(sb_result_t result);
 typedef enum { SB_UNKNOWN, SB_MISS, SB_HIT, SB_SUNK } sb_cell_state_t;
 typedef enum { SB_ATTACK_EVENT, SB_SUNK_EVENT } sb_event_type_t;
 typedef uint32_t (*sb_random_fn)(void *context);
@@ -42,6 +50,7 @@ typedef struct {
     uint8_t count;
     sb_event_t events[SB_EVENTS];
     sb_outcome_t outcome;
+    sb_end_reason_t end_reason;
 } sb_record_t;
 typedef enum { SB_COMPLETED, SB_REPLACED } sb_completion_t;
 /* Storage is caller-owned, with no allocation. Treat fields as read-only; all
@@ -52,6 +61,7 @@ typedef struct {
     sb_knowledge_t knowledge[2]; /* index is the observing/attacking player */
     sb_phase_t phase;
     sb_outcome_t outcome;
+    sb_end_reason_t end_reason;
     uint32_t sequence;
     uint8_t actor, allowance[2], selection[2][SB_SALVO], selected[2];
     bool ready[2], salvo_locked[2], replaced[2], paused, clock_expired;
@@ -99,4 +109,5 @@ bool sb_match_resolve(sb_match_t *match, uint32_t sequence, sb_record_t *record)
  * cannot advance. Previously copied records never change. */
 bool sb_match_advance(sb_match_t *match, uint32_t sequence);
 bool sb_match_surrender(sb_match_t *match, unsigned player);
+bool sb_match_leave(sb_match_t *match, unsigned player);
 bool sb_match_abandon(sb_match_t *match);

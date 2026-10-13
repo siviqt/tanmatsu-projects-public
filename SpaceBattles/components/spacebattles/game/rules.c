@@ -13,11 +13,6 @@ bool sb_spec_make(sb_spec_t *out, sb_ruleset_t id, sb_play_type_t type, uint8_t 
     if (!out || !r || (type != SB_SINGLE_PLAYER && type != SB_VERSUS && type != SB_SHARED_DEVICE) ||
         starter > 1) return false;
     *out = (sb_spec_t){ .rules = *r, .play_type = type, .starter = starter };
-    if (id == SB_ESCALATED) {
-        out->deployment_ms = type == SB_SHARED_DEVICE ? 0 : 60000;
-        out->selection_ms = type == SB_VERSUS ? 30000 : 0;
-        out->match_ms = type == SB_SINGLE_PLAYER ? 600000 : 0;
-    }
     return true;
 }
 bool sb_spec_valid(const sb_spec_t *s) {

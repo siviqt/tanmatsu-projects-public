@@ -17,4 +17,10 @@ function(__idf_build_setup_post_build_validation)
     add_dependencies(app appfs_image_ready)
 endfunction()
 
-project(spacebattles VERSION 0.0.1)
+# Keep the firmware metadata and About screen on the same approved release.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/components/spacebattles/release.h")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/components/spacebattles/release.h"
+    SB_RELEASE_LINE REGEX "^#define SB_RELEASE_NUMBER [0-9]+$")
+string(REGEX REPLACE "^#define SB_RELEASE_NUMBER " "" SB_RELEASE "${SB_RELEASE_LINE}")
+project(spacebattles VERSION ${SB_RELEASE})
