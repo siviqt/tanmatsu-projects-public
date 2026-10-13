@@ -217,11 +217,16 @@ match the persisted `manual_region` confirmation before the application opens
 LoRa. First launch, older saves and profile changes require confirmation in
 Settings > Radio. In-match region edits/reset are blocked.
 
-Existing board/SX1262/v3.4.0 firmware identity checks, device allowlist, config
+Existing board/SX1262/v3.4.0 firmware compatibility checks, config
 readback, idle RX recovery and SD/ESP-Hosted controller handoff are retained.
 EU868: 869.525 MHz, BW125, SF7, CR4/5, 0 dBm. US915: 915 MHz, BW500, same other
 settings. Both retain conservative SF7/BW125 accounting at 9%, including US915.
 No regulatory or hardware qualification claim is added by this protocol change.
+The public-source privacy update removes the two-device MAC allowlist. Radio
+initialization no longer reads or compares a unit's MAC address. Other compatible
+Tanmatsu units can initialize the radio when the existing board, chip, firmware
+version/hash and confirmed regional settings match. This change does not alter
+pairing, encryption or the wire protocol; it has not received new hardware testing.
 A 150-byte STATE accounts for approximately 246ms airtime and 2.73s same-device
 start spacing; the 253-byte driver ceiling accounts for 394.496ms / 4.384s.
 Do not install standalone bootloaders/partition tables: use the AppFS application
