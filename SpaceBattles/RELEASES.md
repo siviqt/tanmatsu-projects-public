@@ -9,6 +9,14 @@ and firmware metadata. Settings schema and LoRa protocol versions are independen
 Release numbers advance only with explicit owner approval; this source export
 does not increment the release number.
 
+## Public-source privacy update, 2026-10-13
+
+Removed the two-device MAC allowlist and its hardware-address lookup. Other
+Tanmatsu units can initialize LoRa when the existing board, SX1262 chip, radio
+firmware version/hash and confirmed region requirements match. Pairing, encryption,
+airtime pacing and protocol versions are unchanged. This source follow-up has not
+received new hardware testing, and the release number remains 6.
+
 ## Release #6 — runtime hygiene update, 2026-10-13
 
 - Original nonblocking input polling and one-tick idle yield retained.

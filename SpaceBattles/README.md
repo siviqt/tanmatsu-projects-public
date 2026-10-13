@@ -3,8 +3,10 @@
 A Battleships-style game for Tanmatsu (ESP32-P4), written in C with ESP-IDF,
 Badge BSP and PAX graphics.
 
-This is the production source for **Release #6**, including the runtime hygiene
-update accepted on hardware on 2026-10-13. See [release notes](RELEASES.md).
+This source distribution is based on **Release #6**, including the runtime hygiene
+update accepted on hardware on 2026-10-13. The public-source privacy update removes
+the two-device MAC allowlist; that follow-up has not been hardware-tested.
+See [release notes](RELEASES.md).
 
 - Single Player against Easy, Normal or Hard AI.
 - Shared Device play with private handovers.
@@ -56,7 +58,8 @@ There is no reliable current-location detector: the factory country code, Wi-Fi
 country, locale and timezone do not authorize transmission. After travelling,
 review the saved region before playing. Without writable SD, confirmation lasts
 only for the current run. The profiles
-retain the exact board/firmware and two-device identity checks. Pairing starts
+retain the exact board and radio-firmware compatibility checks. Device MAC
+addresses do not restrict access. Pairing starts
 as soon as radio initialization completes, with no startup transmit holdoff.
 Per-packet airtime pacing remains active across matches and region changes
 within the same process.
