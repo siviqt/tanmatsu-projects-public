@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory(prefix='sb-m9-runtime-') as tmp:
 #include <string.h>
 #include <stdio.h>
 #include "app/local_run.c"
+esp_err_t sb_versus_run(sb_config_t *c,bool h,sb_ruleset_t r,sb_storage_t *s) { (void)s; (void)c; (void)h; (void)r; return ESP_FAIL; }
 void sb_renderer_set_font_profile(const char *s) { assert(s); }
 esp_err_t sb_platform_apply_settings(const sb_settings_t *s) { assert(s); return ESP_OK; }
 bool sb_storage_save(sb_storage_t *s,sb_config_t *c) { (void)s; c->dirty=false; return true; }
@@ -40,7 +41,6 @@ esp_err_t sb_renderer_message(const char *s);
 esp_err_t sb_renderer_menu(const sb_menu_view_t *v) {
     for(unsigned i=0;i<v->count;++i) assert(!strstr(v->rows[i],"Match abandoned"));
     selected=v->selected;
-    for(unsigned i=0;i<v->count;++i) assert(!strstr(v->rows[i],"Surrender"));
     char text[1024]; snprintf(text,sizeof(text),"%s\n",v->title);
     for(unsigned i=0;i<v->count;++i) { strcat(text,v->rows[i]); strcat(text,"\n"); }
     return sb_renderer_message(text);
@@ -68,7 +68,7 @@ esp_err_t sb_renderer_tactical(const sb_ui_tactical_t *v) {
 bool sb_input_poll(sb_input_event_t *e) {
     // The mocked display labels determine only whether a result is locked.
     // Advance wall time until the real app exits its presentation phase.
-    if(in_result) { now+=1000000; return false; }
+    if(in_result) { *e=(sb_input_event_t){SB_ACTION_COMMIT,SB_INPUT_PRESS}; return true; }
     sb_action_t action=SB_ACTION_NONE;
     if(stage==0) {
         if(setup==0) { action=SB_ACTION_CONFIRM; ++setup; }
@@ -84,15 +84,16 @@ bool sb_input_poll(sb_input_event_t *e) {
         if(deploy<9) action=(deploy++%2)==0 ? SB_ACTION_FIRE : SB_ACTION_DOWN;
         else { action=SB_ACTION_CONFIRM; stage=3; }
     } else if(stage==3) {
-        if(mode<3) { action=SB_ACTION_CONFIRM; stage=5; }
+        if(mode<3) { action=SB_ACTION_SELECT; stage=13; }
         else if(moves<mode+10) { action=(moves++%2)==(mode%2) ? SB_ACTION_RIGHT : SB_ACTION_FIRE; }
         else { action=SB_ACTION_CONFIRM; stage=5; }
-    } else if(stage==4) { action=SB_ACTION_CONFIRM; stage=8; }
+    } else if(stage==13) { action=SB_ACTION_COMMIT; stage=5; }
+    else if(stage==4) { action=SB_ACTION_CONFIRM; stage=8; }
     else if(stage==5) { action=SB_ACTION_CANCEL; stage=6; }
-    else if(stage==6) { if(selected!=3) action=SB_ACTION_DOWN; else { action=SB_ACTION_CONFIRM; stage=7; } }
+    else if(stage==6) { if(selected!=4) action=SB_ACTION_DOWN; else { action=SB_ACTION_CONFIRM; stage=7; } }
     else if(stage==7 && !rematches++) { action=SB_ACTION_CONFIRM; stage=4; }
     else if(stage==8) { action=SB_ACTION_CANCEL; stage=9; }
-    else if(stage==9) { if(selected!=3) action=SB_ACTION_UP; else { action=SB_ACTION_CONFIRM; stage=11; } }
+    else if(stage==9) { if(selected!=4) action=SB_ACTION_UP; else { action=SB_ACTION_CONFIRM; stage=11; } }
     else if(stage==10) { action=SB_ACTION_CANCEL; stage=11; }
     else if(stage==11) { action=SB_ACTION_CANCEL; stage=12; }
     else { action=SB_ACTION_CONFIRM; done=true; }
@@ -100,19 +101,19 @@ bool sb_input_poll(sb_input_event_t *e) {
 }
 int main(void) {
     sb_config_t config={.settings.targeting_confirmation=true};
-    for(unsigned preferences=1;preferences<2;++preferences) for(mode=1;mode<=4;++mode) {
+    for(unsigned preferences=1;preferences<3;++preferences) for(mode=1;mode<=4;++mode) {
         prefs=preferences;
         setup=stage=deploy=moves=result_frames=menu_frames=boards=resets=rematches=0;
         if (preferences) {
             strcpy(config.settings.preferred_ruleset,mode<3 ? "escalated" : "classic");
-            strcpy(config.settings.ai_difficulty,mode%2 ? "normal" : "easy");
+            strcpy(config.settings.ai_difficulty,preferences==2 ? "hard" : mode%2 ? "normal" : "easy");
             moves=mode; // Saved preferences select the desired row without navigation.
         }
         done=in_result=saw_confirmation=false; seed=123; now=0;
         assert(sb_local_run(&config,NULL)==ESP_OK);
         if (preferences) {
             assert(!strcmp(config.settings.preferred_ruleset,mode<3 ? "escalated" : "classic"));
-            assert(!strcmp(config.settings.ai_difficulty,mode%2 ? "normal" : "easy"));
+            assert(!strcmp(config.settings.ai_difficulty,preferences==2 ? "hard" : mode%2 ? "normal" : "easy"));
         }
         assert(done && boards && result_frames && menu_frames && resets && !saw_confirmation);
     }

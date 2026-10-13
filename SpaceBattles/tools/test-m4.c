@@ -244,69 +244,30 @@ static void simultaneous(void) {
     CHECK(!memcmp(&a.fleets[1], &b.fleets[0], sizeof(sb_fleet_t)));
 }
 static void clocks(void) {
-    sb_spec_t spec;
-    sb_match_t m;
-    CHECK(sb_spec_make(&spec, SB_CLASSIC, SB_SINGLE_PLAYER, 1));
-    CHECK(sb_match_init(&m, &spec, 0));
-    spec.starter = 0; CHECK(m.spec.starter == 1); // specification copied
-    CHECK(sb_match_tick(&m, UINT64_C(1000000000), NULL, NULL));
-    CHECK(m.phase == SB_DEPLOYMENT && !m.ready[0]);
-    CHECK(!sb_match_ready(&m, 0));
-    CHECK(sb_spec_make(&spec, SB_ESCALATED, SB_SINGLE_PLAYER, 0));
-    CHECK(sb_match_init(&m, &spec, 100));
-    CHECK(sb_match_place(&m, 0, 0, 9, 0, true));
-    sb_ship_t retained = m.fleets[0].ships[0];
-    CHECK(sb_match_tick(&m, 60099, NULL, NULL) && m.phase == SB_DEPLOYMENT);
-    CHECK(sb_match_tick(&m, 60100, NULL, NULL) && m.phase == SB_TARGETING);
-    CHECK(!memcmp(&retained, &m.fleets[0].ships[0], sizeof(retained)));
-    CHECK(m.combat_elapsed_ms == 0 && m.fleets[0].locked);
-    CHECK(!sb_match_place(&m, 0, 0, 0, 0, false));
-    CHECK(sb_match_pause(&m, true, 60100));
-    CHECK(sb_match_tick(&m, 1060100, NULL, NULL));
-    CHECK(m.combat_elapsed_ms == 0);
-    CHECK(!sb_select(&m, 0, 1, (uint8_t[]){0}, 1));
-    CHECK(sb_match_pause(&m, false, 1060100));
-    CHECK(sb_match_tick(&m, 1660099, NULL, NULL) && m.phase == SB_TARGETING);
-    CHECK(sb_match_tick(&m, 1660100, NULL, NULL) && m.phase == SB_LOCKED);
-    sb_record_t r = resolve(&m);
-    CHECK(r.outcome == SB_DRAW && m.phase == SB_FINISHED);
-    CHECK(!sb_match_tick(&m, 0, NULL, NULL));
-    m = deployed(SB_ESCALATED, SB_VERSUS);
-    CHECK(!sb_match_pause(&m, true, 100));
-    CHECK(sb_select(&m, 0, 1, (uint8_t[]){0}, 1));
-    CHECK(sb_match_tick(&m, 30099, NULL, NULL) && m.phase == SB_TARGETING);
-    CHECK(sb_match_tick(&m, 30100, NULL, NULL) && m.phase == SB_LOCKED);
-    r = resolve(&m); CHECK(r.count == 1 && r.outcome == SB_ONGOING);
-    CHECK(sb_match_advance(&m, 1));
-    CHECK(sb_match_tick(&m, 60099, NULL, NULL) && m.phase == SB_TARGETING);
-    m = deployed(SB_ESCALATED, SB_SINGLE_PLAYER);
-    CHECK(sb_select(&m, 0, 1, (uint8_t[]){0}, 1));
-    CHECK(sb_match_tick(&m, 600100, NULL, NULL));
-    r = resolve(&m); CHECK(r.outcome == SB_WIN_A); // intact segments tie-break
-    m = deployed(SB_ESCALATED, SB_SINGLE_PLAYER);
-    salvo(&m, 0, (uint8_t[]){40,41}, 2); // fewer segments damaged, but a ship sunk
-    salvo(&m, 1, (uint8_t[]){0,1,2,3}, 4);
-    CHECK(sb_match_tick(&m, 600100, NULL, NULL));
-    r = resolve(&m); CHECK(r.outcome == SB_WIN_A); // ships take precedence
-    m = deployed(SB_ESCALATED, SB_SINGLE_PLAYER);
-    salvo(&m, 0, (uint8_t[]){0}, 1); salvo(&m, 1, NULL, 0);
-    r = resolve(&m); sb_record_t saved = r;
-    CHECK(sb_match_tick(&m, 600100, NULL, NULL)); // animation expiry: no second damage
-    CHECK(m.phase == SB_FINISHED && m.outcome == SB_WIN_A && sb_intact(&m.fleets[1]) == 16);
-    CHECK(!memcmp(&saved, &m.record, sizeof(saved)));
-    CHECK(!sb_match_advance(&m, 1));
-    m = near_end();
-    salvo(&m, 0, (uint8_t[]){4,13,22,32,41}, 5);
-    salvo(&m, 1, (uint8_t[]){4,13,22,32,41}, 5);
-    CHECK(sb_match_tick(&m, 600100, NULL, NULL));
-    CHECK(resolve(&m).outcome == SB_DRAW); // destruction before clock score
-    m = deployed(SB_CLASSIC, SB_SINGLE_PLAYER);
-    CHECK(sb_match_pause(&m, true, 100));
-    CHECK(!sb_classic_fire(&m, 0, 1, 0));
-    CHECK(sb_match_pause(&m, false, 10000000));
-    CHECK(sb_match_surrender(&m, 0) && m.outcome == SB_WIN_B);
-    m = deployed(SB_ESCALATED, SB_SINGLE_PLAYER);
-    CHECK(sb_match_abandon(&m) && m.outcome == SB_ABANDONED);
+    for(unsigned rule=SB_CLASSIC;rule<=SB_ESCALATED;rule++) for(unsigned type=SB_SINGLE_PLAYER;type<=SB_SHARED_DEVICE;type++) {
+        sb_spec_t spec; sb_match_t m;
+        CHECK(sb_spec_make(&spec,rule,type,0));
+        CHECK(!spec.deployment_ms && !spec.selection_ms && !spec.match_ms);
+        CHECK(sb_match_init(&m,&spec,0));
+        CHECK(sb_match_place(&m,0,0,0,0,false)); sb_fleet_t f=m.fleets[0];
+        CHECK(sb_match_tick(&m,UINT64_C(1000000000),NULL,NULL));
+        CHECK(m.phase==SB_DEPLOYMENT && !memcmp(&f,&m.fleets[0],sizeof(f)));
+        m=deployed(rule,type);
+        CHECK(sb_match_tick(&m,UINT64_C(1000000000),NULL,NULL));
+        CHECK(m.phase==SB_TARGETING && !m.clock_expired && m.outcome==SB_ONGOING);
+        if(rule==SB_CLASSIC) classic(&m,0);
+        else { salvo(&m,0,(uint8_t[]){0},1); salvo(&m,1,NULL,0); resolve(&m); }
+        sb_record_t record=m.record;
+        CHECK(sb_match_tick(&m,UINT64_C(2000000000),NULL,NULL));
+        CHECK(m.phase==SB_PRESENTING && !memcmp(&record,&m.record,sizeof(record)));
+        CHECK(sb_match_advance(&m,m.sequence));
+        if(type==SB_SINGLE_PLAYER) {
+            CHECK(sb_match_pause(&m,true,m.now_ms));
+            CHECK(!sb_select(&m,0,m.sequence,(uint8_t[]){1},1));
+            CHECK(sb_match_pause(&m,false,m.now_ms));
+        }
+        CHECK(sb_match_surrender(&m,0) && m.outcome==SB_WIN_B);
+    }
 }
 static void complete_matches(void) {
     // Sweep both boards in seeded random order. Check public/private consistency

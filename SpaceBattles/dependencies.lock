@@ -86,6 +86,20 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 0.5.3
+  espressif/eppp_link:
+    component_hash: 04f7f31868b8ae6014c96132740a192d09611a6e46aaa7038c865ffc7e26b38f
+    dependencies:
+    - name: espressif/esp_serial_slave_link
+      registry_url: https://components.espressif.com
+      require: private
+      version: ^1.1.0
+    - name: idf
+      require: private
+      version: '>=5.2'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.1.5
   espressif/esp_lcd_ek79007:
     component_hash: c5a0501fbab972031026aa6144354b31ed6db899cf2ee5a22ca4ebaf3fea1657
     dependencies:
@@ -196,6 +210,16 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 1.2.0~3
+  espressif/esp_serial_slave_link:
+    component_hash: ac1776806de0a6e371c84e87898bb983e19ce62aa7f1e2e5c4a3b0234a575d2c
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.1.2
   espressif/led_strip:
     component_hash: 28621486f77229aaf81c71f5e15d6fbf36c2949cf11094e07090593e659e7639
     dependencies:
@@ -206,6 +230,20 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 3.0.3
+  espressif/wifi_remote_over_eppp:
+    component_hash: 1fd6968af20f0b19e421f6b519b0a8caf81d689afc3783b564c28559e45f66ef
+    dependencies:
+    - name: espressif/eppp_link
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=0.1'
+    - name: idf
+      require: private
+      version: '>=5.3'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.3.3
   idf:
     source:
       type: idf
@@ -231,6 +269,36 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 0.0.3
+  nicolaielectronics/esp-hosted-tanmatsu:
+    component_hash: b4497020eeebc0314206e2ba35f669ecdde326f00884680e2fbb300ebd4b907c
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.3'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.12.3~1
+  nicolaielectronics/esp-wifi-remote-tanmatsu:
+    component_hash: 727ff301054ea14ce2482ffc12154a64b4ac06d2aadd70621d3bb62ccfdebefa
+    dependencies:
+    - name: espressif/wifi_remote_over_eppp
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=0.1'
+    - name: idf
+      require: private
+      version: '>=5.3'
+    - name: nicolaielectronics/esp-hosted-tanmatsu
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32h2, esp32p4]
+      version: '>=2.12.3'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.4.2
   nicolaielectronics/mipi_dsi_abstraction:
     component_hash: 1c68f7a024f5fcbbacc84a1105f9bc01c390f86bb74c49a93c2aa0defd326378
     dependencies:
@@ -283,6 +351,39 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 1.0.0
+  nicolaielectronics/sx126x:
+    component_hash: f236b1290c2725b7d5df5e5e286a355429951ce491649bab558377ebc46f7b2d
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.3.0
+  nicolaielectronics/tanmatsu-lora:
+    component_hash: fcba23da4207cf1e2e33501a747572d83b64dcd964d39ee3cfd0b1638da69182
+    dependencies:
+    - name: espressif/esp_hosted
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target == esp32p4  && $CONFIG{USE_GENERIC_ESP_HOSTED} == True
+      version: =2.12.3
+    - name: idf
+      require: private
+      version: '>=5.5.1'
+    - name: nicolaielectronics/esp-hosted-tanmatsu
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target == esp32p4  && $CONFIG{USE_GENERIC_ESP_HOSTED} == False
+      version: '>=2.12.3'
+    - name: nicolaielectronics/sx126x
+      registry_url: https://components.espressif.com
+      require: private
+      version: ^0.3.0
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.6.0
   nicolaielectronics/tanmatsu_coprocessor:
     component_hash: 6942f39750ce5d30415bfa25eb4d544fb54f4c189d38a5e505fd256ea5a9d55b
     dependencies:
@@ -323,7 +424,10 @@ dependencies:
 direct_dependencies:
 - badgeteam/badge-bsp
 - idf
+- nicolaielectronics/esp-hosted-tanmatsu
+- nicolaielectronics/esp-wifi-remote-tanmatsu
+- nicolaielectronics/tanmatsu-lora
 - robotman2412/pax-gfx
-manifest_hash: 6c05186852c41b2f032a57543c3f714213f0c3192d51097e8fe40d7c6e3f609d
+manifest_hash: fa76acfaef346662fd01863078006c7b206143d63d7789c33144c1d9b1824068
 target: esp32p4
 version: 3.0.0

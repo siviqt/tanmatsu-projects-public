@@ -19,13 +19,19 @@ int __real_fclose(FILE *);
 int __real_rename(const char *, const char *);
 int __real_unlink(const char *);
 FILE *__wrap_fopen(const char *p, const char *m) {
-    if (fault==9) { errno=EIO; return NULL; }
+    if (fault==9 || fault==10) { errno=fault==10 ? ENODEV : EIO; return NULL; }
     if (fault==1 && strchr(m,'w')) { errno=EROFS; return NULL; }
     FILE *f=__real_fopen(p,m);
     if (strchr(m,'w')) writing=f;
     return f;
 }
 size_t __wrap_fwrite(const void *p,size_t s,size_t n,FILE *f) {
+    if (fault==11) {
+        char altered[SB_CONFIG_TEXT_MAX+1]; assert(s*n<sizeof(altered));
+        memcpy(altered,p,s*n); altered[s*n]=0;
+        char *value=strstr(altered,"brightness=42"); assert(value); value[12]='3';
+        return __real_fwrite(altered,s,n,f);
+    }
     if (fault==2) { errno=ENOSPC; return __real_fwrite(p,s,n/2,f); }
     return __real_fwrite(p,s,n,f);
 }
@@ -41,6 +47,8 @@ int __wrap_fclose(FILE *f) {
 int __wrap_rename(const char *a,const char *b) {
     ++rename_count;
     if ((fault==6 && rename_count==1) || (fault==7 && rename_count==2)) {errno=EIO; return -1;}
+    // FatFs refuses to replace an existing destination (unlike POSIX).
+    if (access(b,F_OK)==0) { errno=EEXIST; return -1; }
     return __real_rename(a,b);
 }
 int __wrap_unlink(const char *p) { if(fault==8) {errno=EIO; return -1;} return __real_unlink(p); }
@@ -89,7 +97,49 @@ static void check_m10_config(void) {
     puts("M10 optional settings, compatibility, dirty state and mute volume preservation passed");
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    if (argc==2) {
+        sb_storage_t s; sb_config_t c;
+        sb_storage_load(&s,&c,true);
+        assert(s.status==SB_STORAGE_READY);
+        if (!strcmp(argv[1],"--write")) {
+            assert(sb_config_set(&c,"player","callsign","RELEASE-UPGRADE"));
+            assert(sb_config_set(&c,"radio","region","US915"));
+            assert(sb_config_set(&c,"radio","manual_region","US915"));
+            assert(sb_storage_save(&s,&c));
+        } else {
+            assert(!strcmp(argv[1],"--read"));
+            assert(!strcmp(c.settings.callsign,"RELEASE-UPGRADE") && !c.dirty);
+            assert(sb_config_radio_confirmed(&c) && !strcmp(c.settings.region,"US915"));
+        }
+        return 0;
+    }
+    {
+        sb_config_t c;
+        sb_config_defaults(&c); assert(!sb_config_radio_confirmed(&c));
+        const char *unconfirmed[]={
+            "[meta]\nversion=1\n",
+            "[meta]\nversion=1\n[radio]\nregion=EU868\n",
+            "[meta]\nversion=1\n[radio]\nregion=US915\n",
+            "[meta]\nversion=1\n[radio]\nregion=EU868\nmanual_region=US915\n",
+            "[meta]\nversion=1\n[radio]\nregion=EU868\nregion=US915\nmanual_region=US915\n",
+            "[meta]\nversion=1\n[radio]\nregion=EU868\nmanual_region=EU868\nregion=invalid\n",
+            "[meta]\nversion=1\n[radio]\nregion=EU868\nmanual_region=EU868\nmanual_region=US915\n",
+            "[meta]\nversion=1\n[radio]\ncountry=BG\nregion=EU868\n",
+            "[meta]\nversion=1\n[radio]\ncountry=US\nregion=US915\n"
+        };
+        for(size_t i=0;i<sizeof(unconfirmed)/sizeof(*unconfirmed);++i) {
+            assert(sb_config_parse(&c,unconfirmed[i])==SB_CONFIG_VALID);
+            assert(!sb_config_radio_confirmed(&c));
+        }
+        assert(sb_config_parse(&c,"[meta]\nversion=1\n[radio]\nmanual_region=EU868\nregion=EU868\n")==SB_CONFIG_VALID);
+        assert(sb_config_radio_confirmed(&c));
+        assert(sb_config_set(&c,"radio","region","US915"));
+        assert(!sb_config_radio_confirmed(&c));
+        assert(sb_config_set(&c,"radio","region","EU868"));
+        assert(!sb_config_radio_confirmed(&c));
+        sb_config_reset(&c); assert(!sb_config_radio_confirmed(&c));
+    }
     check_m10_config();
     sb_config_t c,d; sb_storage_t s; char text[SB_CONFIG_TEXT_MAX+1];
     sb_config_defaults(&c); assert(c.settings.brightness==80 && !c.dirty);
@@ -134,10 +184,22 @@ int main(void) {
         assert(sb_config_set(&c,"display","brightness","42"));
         fault=f; rename_count=0;
         assert(!sb_storage_save(&s,&c) && c.dirty);
+        assert(s.last_operation && s.last_path && s.last_errno);
         fault=0;
         check_value(80); // Never lose the last committed configuration.
         assert(sb_storage_save(&s,&c) && !c.dirty); check_value(42);
     }
+    // A fully written, parseable but altered replacement must not be committed.
+    clean(); sb_storage_load(&s,&c,true);
+    assert(sb_config_set(&c,"display","brightness","42"));
+    fault=11; assert(!sb_storage_save(&s,&c) && c.dirty);
+    assert(!strcmp(s.last_operation,"verify")); fault=0; check_value(80);
+    // A complete temporary file may be the sole recoverable first save.
+    clean(); assert(mkdir("sd/SpaceBattles",0775)==0);
+    put("config.tmp","[meta]\nversion=1\n[display]\nbrightness=37\n");
+    s=(sb_storage_t){.mounted=true}; sb_config_defaults(&c); c.dirty=true;
+    fault=2; assert(!sb_storage_save(&s,&c)); fault=0;
+    check_value(37);
     // Every interrupted rename boundary: committed ini wins, backup wins over
     // pending tmp, and a complete tmp is recovered if no committed file exists.
     clean(); sb_storage_load(&s,&c,true);
@@ -165,6 +227,26 @@ int main(void) {
     clean(); sb_storage_load(&s,&c,true); fault=9;
     sb_storage_load(&s,&c,true); assert(s.status==SB_STORAGE_ERROR && c.settings.brightness==80);
     sb_config_reset(&c); assert(!sb_storage_save(&s,&c) && c.dirty); fault=0; check_value(80);
+    // Removal during a dirty session retains edits and the committed save.
+    clean(); sb_storage_load(&s,&c,true);
+    assert(sb_config_set(&c,"display","brightness","42"));
+    fault=10; assert(!sb_storage_save(&s,&c) && c.dirty);
+    assert(s.status==SB_STORAGE_ERROR && s.last_errno==ENODEV);
+    fault=0; check_value(80); assert(sb_storage_save(&s,&c)); check_value(42);
+    // A successful remount after unavailable startup can create the directory.
+    clean(); sb_storage_load(&s,&c,false);
+    assert(sb_config_set(&c,"display","brightness","53"));
+    s.mounted=true; assert(sb_storage_save(&s,&c)); check_value(53);
+    // Legacy v1 missing optional fields loads without rewriting; updates retain
+    // its supported values and add the current optional defaults.
+    clean(); assert(mkdir("sd/SpaceBattles",0775)==0);
+    put("config.ini","[meta]\nversion=1\n[display]\nbrightness=61\n[audio]\nmaster_volume=29\n");
+    assert(stat("sd/SpaceBattles/config.ini",&before)==0);
+    sb_storage_load(&s,&c,true); assert(s.status==SB_STORAGE_READY && !c.dirty);
+    assert(c.settings.brightness==61 && c.settings.master_volume==29 && c.settings.sound_enabled);
+    assert(stat("sd/SpaceBattles/config.ini",&after)==0 && before.st_ino==after.st_ino && before.st_size==after.st_size);
+    assert(sb_config_set(&c,"player","callsign","OLD-SAVE")); assert(sb_storage_save(&s,&c));
+    sb_storage_load(&s,&c,true); assert(c.settings.brightness==61 && c.settings.master_volume==29);
     // Bounded input and embedded NULs are protected, including hidden versions.
     clean(); sb_storage_load(&s,&c,true);
     char huge[SB_CONFIG_TEXT_MAX+2]; memset(huge,'x',sizeof(huge)-1); huge[sizeof(huge)-1]=0;
@@ -176,6 +258,6 @@ int main(void) {
     sb_storage_load(&s,&c,true); assert(s.status==SB_STORAGE_PROTECTED);
     clean(); FILE *f=fopen("sd/SpaceBattles","w"); assert(f); fclose(f);
     sb_storage_load(&s,&c,true); assert(s.status==SB_STORAGE_ERROR); unlink("sd/SpaceBattles");
-    puts("M2 parser, persistence, recovery and 9 I/O fault cases passed");
+    puts("M2 parser, persistence, recovery and 11 I/O fault cases, legacy saves and remount retry passed");
     return 0;
 }

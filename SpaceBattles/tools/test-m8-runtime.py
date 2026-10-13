@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory(prefix='sb-m8-runtime-') as tmp:
 #include <string.h>
 #include <stdio.h>
 #include "app/local_run.c"
+esp_err_t sb_versus_run(sb_config_t *c,bool h,sb_ruleset_t r,sb_storage_t *s) { (void)s; (void)c; (void)h; (void)r; return ESP_FAIL; }
 #include "platform/turn_led.c"
 void sb_renderer_set_font_profile(const char *s) { assert(s); }
 esp_err_t sb_platform_apply_settings(const sb_settings_t *s) { assert(s); return ESP_OK; }
@@ -46,8 +47,8 @@ static void make_combat_script(void) {
         for(unsigned ship=0;ship<5;++ship) { tap(SB_ACTION_FIRE); if(ship<4) tap(SB_ACTION_DOWN); }
         tap(SB_ACTION_CONFIRM);
     }
-    handover(); tap(SB_ACTION_CONFIRM); // First shot, then pause input until result ends.
-    pause_index=combat_count;
+    handover(); tap(SB_ACTION_SELECT); tap(SB_ACTION_COMMIT); // Select and fire.
+    pause_index=combat_count; tap(SB_ACTION_COMMIT);
     tap(SB_ACTION_CANCEL); tap(SB_ACTION_UP); tap(SB_ACTION_CONFIRM); tap(SB_ACTION_CANCEL); tap(SB_ACTION_CONFIRM);
 }
 static const sb_input_event_t script[]={
@@ -92,7 +93,7 @@ esp_err_t sb_renderer_menu(const sb_menu_view_t *v) {
 }
 esp_err_t sb_renderer_handover(bool b,bool deployment,bool first) {
     if(!combat_test) assert(!b && deployment);
-    if(combat_test && !deployment && b) assert(result_frames==3 && now_us>=result_visible_us+3000000);
+    if(combat_test && !deployment && b) assert(result_frames==1 && now_us>=result_visible_us+3000000);
     (void)first; ++covers;
     return fail_cover ? ESP_FAIL : ESP_OK;
 }
@@ -105,7 +106,7 @@ esp_err_t sb_renderer_tactical(const sb_ui_tactical_t *v) {
         assert(!v->own_board && !strcmp(v->phase_label,"HIT"));
         ++result_frames;
         if(result_frames==1) { now_us+=250000; result_visible_us=now_us; }
-        assert(strstr(v->action_label,result_frames==1 ? "3..." : result_frames==2 ? "2..." : "1..."));
+        assert(!strstr(v->action_label,"..."));
     }
     ++boards; return ESP_OK;
 }
@@ -123,13 +124,13 @@ int main(void) {
     assert(boards && covers && a_frames && off_frames && resets>=8);
     assert(!pixels[4] && !pixels[5] && pos==sizeof(script)/sizeof(script[0]));
     fresh(); combat_test=true; make_combat_script();
-    assert(sb_local_run(&config,NULL)==ESP_OK && result_frames==3 && pos==combat_count);
+    assert(sb_local_run(&config,NULL)==ESP_OK && result_frames==1 && pos==combat_count);
     assert(!pixels[4] && !pixels[5]);
     fresh(); fail_cover=true; assert(sb_local_run(&config,NULL)==ESP_FAIL);
     assert(!boards && covers==1 && !pixels[4] && !pixels[5]);
     fresh(); fail_led=true; assert(sb_local_run(&config,NULL)==ESP_FAIL);
     assert(!pos && !frames && !pixels[4] && !pixels[5]);
-    puts("M8 runtime: menu, help/cover return, deployment, timed result presentation, abandon, LED cleanup and display/LED failures passed");
+    puts("M8 runtime: menu, help/cover return, deployment, explicit result continuation, abandon, LED cleanup and display/LED failures passed");
 }
 ''')
     subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-I'+tmp,

@@ -16,3 +16,7 @@ with tempfile.TemporaryDirectory(prefix="spacebattles-m2-") as tmp:
                     *["-Wl,--wrap=" + f for f in ("fopen", "fwrite", "fflush", "fsync", "fclose", "rename", "unlink")],
                     "-o", exe], check=True)
     subprocess.run([exe], cwd=tmp, check=True, env={**os.environ, "ASAN_OPTIONS": "detect_leaks=0"})
+
+    # Separate processes exercise persisted state beyond in-memory load/save.
+    for mode in ("--write", "--read", "--write", "--read"):
+        subprocess.run([exe, mode], cwd=tmp, check=True, env={**os.environ, "ASAN_OPTIONS": "detect_leaks=0"})

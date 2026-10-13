@@ -3,8 +3,13 @@
 from pathlib import Path
 import subprocess
 import tempfile
+from PIL import Image
 root=Path(__file__).resolve().parents[1]
 out=root/'build/m10-preview'; out.mkdir(parents=True,exist_ok=True)
+# Exercise the same embedded artwork and UI composition on the host.
+with Image.open(root/'components/spacebattles/assets/menu.jpg') as art:
+    assert art.size == (800,480)
+    (out/'menu-art.rgba').write_bytes(art.convert('RGBA').tobytes())
 with tempfile.TemporaryDirectory(prefix='sb-m10-') as tmp:
     work=Path(tmp)
     (work/'esp_err.h').write_text('#pragma once\ntypedef int esp_err_t;\n')

@@ -24,25 +24,15 @@ static void unlock(sb_local_t *s) {
     assert(s->match.sequence<2 || s->match.phase==SB_TARGETING);
 }
 static void result_delay(sb_local_t *s) {
-    assert(s->screen==SB_LOCAL_RESULT && s->result_seconds==3);
-    sb_match_t before=s->match;
-    sb_ui_tactical_t view;
-    assert(sb_local_project(s,&view) && !view.own_board && view.effects && view.targets[s->cursor]);
-    for(unsigned i=0;i<100;++i) assert(!view.occupied[i] && !view.placement[i]);
-    for(unsigned a=SB_ACTION_UP;a<=SB_ACTION_CONTEXT;++a) press(s,a);
+    assert(s->screen==SB_LOCAL_RESULT);
+    sb_match_t before=s->match; sb_ui_tactical_t view;
+    assert(sb_local_project(s,&view) && view.effects && view.targets[s->cursor]);
+    for(unsigned a=SB_ACTION_UP;a<=SB_ACTION_SURRENDER;a++) if(a!=SB_ACTION_CONFIRM && a!=SB_ACTION_COMMIT) press(s,a);
     assert(s->screen==SB_LOCAL_RESULT && !memcmp(&before,&s->match,sizeof(before)));
-    assert(!sb_local_tick(s,99999)); // Not timed until successful presentation.
     sb_local_presented(s,100000);
-    assert(!sb_local_tick(s,99999));
-    assert(!sb_local_tick(s,100999) && s->result_seconds==3);
-    assert(sb_local_tick(s,101000) && s->result_seconds==2);
-    sb_local_presented(s,101000); // Countdown redraw must not restart the hold.
-    assert(sb_local_tick(s,102000) && s->result_seconds==1);
-    assert(!sb_local_tick(s,102999) && s->screen==SB_LOCAL_RESULT);
-    assert(sb_local_tick(s,103000));
-    assert(s->reset_input);
-    assert(s->screen==(before.phase==SB_FINISHED ? SB_LOCAL_FINISHED : SB_LOCAL_COVER));
-    assert(!sb_local_tick(s,200000));
+    assert(!sb_local_tick(s,1000000000) && s->screen==SB_LOCAL_RESULT);
+    press(s,SB_ACTION_COMMIT);
+    assert(s->reset_input && s->screen==(before.phase==SB_FINISHED ? SB_LOCAL_FINISHED : SB_LOCAL_COVER));
 }
 static void deploy(sb_local_t *s) {
     unlock(s);
@@ -60,7 +50,7 @@ static void deploy(sb_local_t *s) {
     s->cursor=0;
 
     for(unsigned i=0;i<SB_SHIPS;++i) {
-        s->cursor=i*10; press(s,SB_ACTION_FIRE);
+        s->cursor=i*10; press(s,i%2 ? SB_ACTION_FIRE : SB_ACTION_SELECT);
         if(i==0) {
             assert(sb_local_project(s,&view) && !view.placement_valid);
             before=s->match.fleets[s->player];
@@ -91,7 +81,7 @@ static void deploy(sb_local_t *s) {
 static void reveal_result(sb_local_t *s) {
     assert(s->screen==SB_LOCAL_COVER && s->review_result); hidden(s);
     // Neither a stale release, a view shortcut nor Enter reveals the result.
-    event(s,SB_ACTION_FIRE,SB_INPUT_RELEASE); press(s,SB_ACTION_CONTEXT); press(s,SB_ACTION_CONFIRM);
+    event(s,SB_ACTION_FIRE,SB_INPUT_RELEASE); press(s,SB_ACTION_SURRENDER); press(s,SB_ACTION_CONFIRM);
     assert(s->screen==SB_LOCAL_COVER); hidden(s);
     assert(sb_local_open_settings(s)); sb_local_close_settings(s);
     event(s,SB_ACTION_FIRE,SB_INPUT_RELEASE); assert(s->screen==SB_LOCAL_COVER);
@@ -128,9 +118,9 @@ static void escalated_shared(void) {
                 }
             assert(s.match.selected[p]==count);
             before=s.match;
-            press(&s,SB_ACTION_OWN_FLEET); press(&s,SB_ACTION_CONFIRM); press(&s,SB_ACTION_FIRE);
+            press(&s,SB_ACTION_DEPLOY_ROTATE);
             assert(!memcmp(&before,&s.match,sizeof(before)));
-            press(&s,SB_ACTION_CONTEXT); assert(s.match.selected[p]==count);
+            assert(s.match.selected[p]==count);
             press(&s,SB_ACTION_CONFIRM);
             if(p==0) {
                 assert(s.screen==SB_LOCAL_COVER && s.match.salvo_locked[0] && !s.match.salvo_locked[1]);
@@ -138,13 +128,13 @@ static void escalated_shared(void) {
             } else assert(s.screen==SB_LOCAL_RESULT && s.result_seen==2);
         }
         sb_record_t record=s.match.record;
-        sb_local_presented(&s,clock); sb_local_tick(&s,clock+3000); clock+=3000;
+        sb_local_presented(&s,clock); sb_local_tick(&s,clock+3000); press(&s,SB_ACTION_COMMIT); clock+=3000;
         assert(s.player==0 && s.match.sequence==seq); reveal_result(&s);
         assert(s.result_seen==3 && !memcmp(&record,&s.match.record,sizeof(record)));
         sb_ui_tactical_t v; assert(sb_local_project(&s,&v));
         assert(v.effects && v.dual && v.result && !v.player_b);
         assert(sb_local_indicator(&s)==0);
-        sb_local_presented(&s,clock); sb_local_tick(&s,clock+3000); clock+=3000;
+        sb_local_presented(&s,clock); sb_local_tick(&s,clock+3000); press(&s,SB_ACTION_COMMIT); clock+=3000;
         if(s.match.phase!=SB_FINISHED) assert(s.screen==SB_LOCAL_COVER && s.player==0 && s.match.sequence==seq+1);
     }
     assert(s.screen==SB_LOCAL_FINISHED && s.match.outcome==SB_DRAW && sb_local_indicator(&s)==-1);
@@ -152,7 +142,7 @@ static void escalated_shared(void) {
     assert(s.match.spec.rules.id==SB_ESCALATED);
     press(&s,SB_ACTION_CONFIRM); press(&s,SB_ACTION_CANCEL);
     for(unsigned i=0;i<3;++i) press(&s,SB_ACTION_DOWN);
-    press(&s,SB_ACTION_CONFIRM); assert(s.match.outcome==SB_WIN_B);
+    press(&s,SB_ACTION_CONFIRM); assert(s.screen==SB_LOCAL_SURRENDER); press(&s,SB_ACTION_CONFIRM); assert(s.match.outcome==SB_WIN_B);
     puts("Shared Escalated: untimed private salvos, partial submission, two private result views, mutual draw, rematch and surrender passed");
 }
 int main(void) {
@@ -162,19 +152,19 @@ int main(void) {
     assert(s.match.spec.starter==1 && sb_local_indicator(&s)==-1);
     press(&s,SB_ACTION_CONFIRM); assert(sb_local_indicator(&s)==0);
     press(&s,SB_ACTION_HELP); hidden(&s);
-    press(&s,SB_ACTION_ENEMY_VIEW); hidden(&s);
+    press(&s,SB_ACTION_SELECT); hidden(&s);
     press(&s,SB_ACTION_CANCEL); assert(s.screen==SB_LOCAL_COVER && s.presses==0);
-    press(&s,SB_ACTION_OWN_FLEET); hidden(&s);
+    press(&s,SB_ACTION_DEPLOY_ROTATE); hidden(&s);
     deploy(&s); assert(s.player==1 && s.match.ready[0] && !s.match.ready[1]);
     deploy(&s); assert(s.player==1 && s.match.phase==SB_TARGETING);
     unlock(&s);
     sb_ui_tactical_t v;
     assert(sb_local_project(&s,&v));
     for(unsigned c=0;c<100;++c) assert(!v.occupied[c]);
-    press(&s,SB_ACTION_OWN_FLEET); assert(sb_local_project(&s,&v));
-    unsigned occupied=0; for(unsigned c=0;c<100;++c) occupied+=v.occupied[c]; assert(occupied==17);
+    press(&s,SB_ACTION_DEPLOY_ROTATE); assert(sb_local_project(&s,&v));
+    unsigned occupied=0; for(unsigned c=0;c<100;++c) occupied+=v.fleet_occupied[c]; assert(occupied==17 && s.view_mode==0);
     press(&s,SB_ACTION_FIRE); assert(s.match.phase==SB_TARGETING);
-    press(&s,SB_ACTION_ENEMY_VIEW);
+    press(&s,SB_ACTION_SELECT);
     press(&s,SB_ACTION_FIRE); assert(s.screen==SB_LOCAL_TARGET && s.match.sequence==1);
     event(&s,SB_ACTION_CONFIRM,SB_INPUT_REPEAT); assert(s.match.sequence==1);
     // Complete a whole match through the public controller; both fleets identical,
@@ -188,7 +178,7 @@ int main(void) {
             unsigned length=s.match.spec.rules.lengths[ship];
             if(n<count+length) {cell=ship*10+n-count;break;} count+=length;
         }
-        s.cursor=cell;
+        s.cursor=cell; s.classic_selected=false; press(&s,SB_ACTION_SELECT);
         unsigned seq=s.match.sequence;
         press(&s,SB_ACTION_CONFIRM);
         result_delay(&s);
@@ -201,11 +191,11 @@ int main(void) {
     assert(s.screen==SB_LOCAL_FINISHED); hidden(&s);
     assert(sb_local_begin(&s,true,rng,NULL)); assert(s.match.spec.starter==0);
     press(&s,SB_ACTION_CONFIRM); deploy(&s); deploy(&s); unlock(&s);
-    press(&s,SB_ACTION_CONFIRM); result_delay(&s); assert(s.screen==SB_LOCAL_COVER);
-    unlock(&s); s.cursor=99; press(&s,SB_ACTION_CONFIRM); result_delay(&s);
+    press(&s,SB_ACTION_SELECT); press(&s,SB_ACTION_CONFIRM); result_delay(&s); assert(s.screen==SB_LOCAL_COVER);
+    unlock(&s); s.cursor=99; press(&s,SB_ACTION_SELECT); press(&s,SB_ACTION_CONFIRM); result_delay(&s);
     unlock(&s); s.cursor=0;
     press(&s,SB_ACTION_CONFIRM); assert(s.screen==SB_LOCAL_TARGET && s.match.sequence==3);
     press(&s,SB_ACTION_CANCEL); hidden(&s); press(&s,SB_ACTION_UP); press(&s,SB_ACTION_CONFIRM);
     assert(s.match.outcome==SB_ABANDONED && sb_local_indicator(&s)==-1);
-    puts("M8: full Shared Device match, privacy, handovers, three-second results, ship editing, rematch and abandonment passed");
+    puts("M8: full Shared Device match, privacy, handovers, explicit results, ship editing, rematch and abandonment passed");
 }
