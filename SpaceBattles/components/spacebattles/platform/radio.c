@@ -12,7 +12,6 @@ const sb_net_profile_t *sb_radio_profile(const char *region) {
 #include "bsp/power.h"
 #include "esp_event.h"
 #include "esp_hosted.h"
-#include "esp_mac.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -72,11 +71,9 @@ static esp_err_t initialize(void) {
         radio_identity_t req={.seq=esp_random(),.type=2},identity;
         TRY(esp_hosted_send_custom_data(5,(uint8_t *)&req,sizeof(req)));
         if(xQueueReceive(identities,&identity,pdMS_TO_TICKS(2500))!=pdTRUE) return ESP_ERR_TIMEOUT;
-        uint8_t mac[6]; TRY(esp_efuse_mac_get_default(mac));
-        const uint8_t devices[2][6]=SB_NET_DEVICES,sha[32]=SB_NET_RADIO_SHA;
+        const uint8_t sha[32]=SB_NET_RADIO_SHA;
         if(identity.seq!=req.seq || identity.type!=2 || status.chip_type!=LORA_PROTOCOL_CHIP_SX1262 || status.errors ||
-           identity.board!=SB_NET_RADIO_BOARD || strncmp(identity.version,SB_NET_RADIO_VERSION,32) || memcmp(identity.sha,sha,32) ||
-           (memcmp(mac,devices[0],6) && memcmp(mac,devices[1],6))) return ESP_ERR_NOT_SUPPORTED;
+           identity.board!=SB_NET_RADIO_BOARD || strncmp(identity.version,SB_NET_RADIO_VERSION,32) || memcmp(identity.sha,sha,32)) return ESP_ERR_NOT_SUPPORTED;
     }
     TRY(lora_set_mode(&radio,LORA_PROTOCOL_MODE_STANDBY_RC));
     lora_protocol_config_params_t config={.frequency=active_profile->frequency,.spreading_factor=7,.bandwidth=active_profile->bandwidth,.coding_rate=5,
