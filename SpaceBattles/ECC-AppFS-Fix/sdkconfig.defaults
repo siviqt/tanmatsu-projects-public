@@ -1,0 +1,4 @@
+# Merge into the application's defaults, alongside its board configuration.
+CONFIG_BSP_TARGET_TANMATSU=y
+CONFIG_BOOTLOADER_CUSTOM_RESERVE_RTC=y
+CONFIG_BOOTLOADER_CUSTOM_RESERVE_RTC_SIZE=0x100
