@@ -110,7 +110,7 @@ Build with `tools/build.sh` in the ESP-IDF 6.0.2 environment. Install the result
 ## Hardware confirmation and remaining checks
 
 On 2026-10-10 the owner confirmed application HW tests passed after the LoRa
-region-confirmation update. Historical device evidence is retained separately
+region-confirmation update. Historical device acceptance was recorded separately
 from this source distribution.
 Schema version 1 now also saves `radio.manual_region`, separately from the
 selected `radio.region`. Legacy files require explicit confirmation; changing the
@@ -119,7 +119,7 @@ overall hardware report did not include individual case logs, so the broader
 media-failure and power-loss qualification below is not marked complete.
 
 On 2026-10-09 the owner confirmed that SD saves work with this fix. The historical
-device log (retained separately from this source distribution) matches
+device log inspected before cleanup matched
 ELF `f45e89087...`, shows `SD mount result: ESP_OK` and configuration loading on
 two application launches, and a successful SD remount after radio use. This
 confirms the reported startup save regression is resolved. The log does not

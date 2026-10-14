@@ -1,14 +1,10 @@
-# Cyberdeck production artwork
+# Menu artwork source
 
-`menu-background-master.png` is the selected generated fleet/planet background.
-It is source material for the native 800x480 JPEG embedded in the firmware.
-Live panels, branding, radar grid, ships, focus and controls are drawn by PAX.
-Private handovers clear the framebuffer.
+`menu-background-master.png` is the selected text-free fleet/planet illustration
+used beneath live menus and deployment surfaces. It is source material; firmware
+embeds the 800×480 `components/spacebattles/assets/menu.jpg`.
 
-From the project root, run `python3 tools/prepare-cyberdeck-assets.py` with Pillow
-to reproduce `components/spacebattles/assets/menu.jpg` (quality 88, 4:4:4,
-baseline JPEG). Regeneration is optional; the JPEG is included.
-
-The title mask in `components/spacebattles/render/title.h` is a self-contained
-build input. Its original raster master is unavailable; the converter does not
-regenerate that mask.
+Run `python3 tools/prepare-cyberdeck-assets.py` with Pillow to regenerate that JPEG
+(quality 88, 4:4:4, baseline). Conversion is not required to build the application.
+The title mask in `components/spacebattles/render/title.h` is a required source
+asset: its original raster master was absent from the supplied project.

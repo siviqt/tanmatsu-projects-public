@@ -4,8 +4,9 @@ A Battleships-style game for Tanmatsu (ESP32-P4), written in C with ESP-IDF,
 Badge BSP and PAX graphics.
 
 This source distribution is based on **Release #6**, including the runtime hygiene
-update accepted on hardware on 2026-10-13. The public-source privacy update removes
-the two-device MAC allowlist; that follow-up has not been hardware-tested.
+and launcher ECC handoff fixes accepted on hardware on 2026-10-13. Both the production and Git release sources include the MAC unlock: compatible
+units are no longer restricted to two test-device addresses. The combined source
+has passed clean firmware builds and host tests; it has not received a new device test.
 See [release notes](RELEASES.md).
 
 - Single Player against Easy, Normal or Hard AI.
@@ -20,7 +21,6 @@ Install the same application version on both devices: wire v2 / setup v4 is
 incompatible with older protocol versions.
 
 ## Build
-
 
 Use ESP-IDF **6.0.2**, including its ESP32-P4 toolchain, Python environment,
 CMake and Ninja. The component manager resolves Badge BSP **1.4.0** and
@@ -72,8 +72,12 @@ its generated standalone-flash partition table does not define application capac
 
 Rebuilt firmware is not guaranteed to be byte-identical to the accepted image.
 
-## AI and match results
+The [launcher handoff fix](LAUNCHER-HANDOFF.md) restores ECC crypto memory power
+before returning to AppFS. It prevents Repository TLS verification failures after
+LoRa pairing when the launcher uses the older ESP-IDF 5.5.2 driver. The owner
+confirmed successful Repository access after both Host and Join exits.
 
+## AI and match results
 
 Easy chooses random unknown cells. Normal prioritizes adjacent/aligned hits and
 search stripes. Hard enumerates legal placements of each remaining ship length,
@@ -140,9 +144,12 @@ input and PAX rendering tests, then run:
 
 ```sh
 python3 tools/test-m0a.py
+python3 tools/test-launcher.py
 python3 tools/test-m3.py
 python3 tools/test-m1-renderer.py
 python3 tools/test-menu-performance.py
+python3 tools/test-m5.py
+python3 tools/test-m6.py
 python3 tools/test-sdcard.py
 python3 tools/test-m2.py
 python3 tools/test-m4.py
@@ -170,8 +177,8 @@ rendering and the build's validation hooks. Embedded JPEGs and generated font
 and title data are included, so firmware builds need no asset conversion step.
 
 - [Settings persistence and validation](SAVE-PERSISTENCE.md)
+- [Launcher Repository issue and fix](LAUNCHER-HANDOFF.md)
 - [LoRa wire contract](components/spacebattles/net/README.md)
-- [Historical latency simulation](components/spacebattles/net/LATENCY.md)
 - [Embedded assets](components/spacebattles/assets/README.md)
 - [Menu artwork source](assets/cyberdeck-v1/README.md)
 
@@ -182,6 +189,18 @@ requires the OpenSSL command-line tool). Their inputs are included.
 
 Project code is licensed under [MIT](LICENSE). Bundled fonts and their bitmap
 derivatives use the SIL Open Font License; notices are in
-[assets/fonts](components/spacebattles/assets/fonts/). Historical Tanmatsu key
-icons retain their [MIT notice](components/spacebattles/assets/keys/LICENSE).
-Managed third-party components carry their own licenses.
+[assets/fonts](components/spacebattles/assets/fonts/). Managed third-party components carry their own licenses.
+
+## Source packaging
+
+The main project is the production source. `Spacebattle-Git-Release/`, when
+present inside it, is a source-only copy for manual upload. Upload that folder's
+contents, including `.gitignore`, to your repository. It has the same application
+implementation and includes an independent `ECC-AppFS-Fix/` component and guide.
+Neither copy needs the other to build. Build output, downloaded dependencies and
+local `sdkconfig` are regenerated and are not distributed.
+
+Current regression tests are development source, not old experimental firmware.
+The embedded JPEGs, title mask and font C data are required compiler inputs; keep
+them even though some were originally generated. Font sources/licenses and the
+menu artwork master support the retained conversion tools.

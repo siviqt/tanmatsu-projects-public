@@ -211,7 +211,7 @@ guest state; restarting either process starts a new match.
 ## Radio profiles and validation
 
 The explicit region-confirmation update passed application hardware tests,
-owner-confirmed on 2026-10-10. Historical hardware records are retained separately.
+owner-confirmed on 2026-10-10. Historical acceptance is summarized below.
 No reliable current-location source is available. The selected `region` must
 match the persisted `manual_region` confirmation before the application opens
 LoRa. First launch, older saves and profile changes require confirmation in
@@ -246,13 +246,13 @@ physical RF qualification remains separate.
 On 2026-10-10 the owner confirmed “HW checks are pass.” after the gameplay update
 and immediate surrender-result fix. The final runtime suite additionally passed
 ten no-input surrender cases across host/guest: deployment, submitted Escalated
-salvos, Classic review, Help and Link. Historical hardware records are retained separately.
+salvos, Classic review, Help and Link. Historical acceptance is summarized below.
 This records the hardware report without attributing the automated case matrix
 or timing measurements to physical tests.
 
 On 2026-10-12 the owner confirmed “HW checks passed” for Release #5, including
-the delivered LoRa departure update. The exact accepted binary and automated
-checks are retained separately from this source distribution.
+the delivered LoRa departure update. Historical binaries and test outputs are
+not distributed; current regression test sources are included.
 The initial Release #6 rebuild changed only release identification; the later
 runtime hygiene update was accepted on 2026-10-13. See the
 [release notes](../../../RELEASES.md). The Release #5 hardware report does not

@@ -21,8 +21,7 @@ No additional full-screen buffer was introduced for GUI v3.
 
 Frames, function-key badges, wireframe ships and focus indicators are drawn by
 PAX. The former physical-symbol key atlas and unused emblem header are omitted;
-neither is compiled. Original physical-key
-PNG sources and their MIT notice remain in `keys/` for reference.
+neither is compiled.
 
 Font sources, bitmap data and SIL Open Font License notices remain in `fonts/`
 and `../render/font_assets.c`. The project README lists the retained rendering

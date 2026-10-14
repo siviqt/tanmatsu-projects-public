@@ -114,10 +114,3 @@ bool sb_platform_can_release_frame(void) {
     return !transfer_uncertain;
 }
 
-void sb_platform_exit(void) {
-    // Keep the registered callback and semaphore alive until the BSP restart.
-    ESP_LOGI("SpaceBattles", "Returning to launcher");
-    bsp_device_restart_to_launcher();
-    // Fail closed if a future BSP unexpectedly returns; no restart loop.
-    for (;;) vTaskDelay(portMAX_DELAY);
-}

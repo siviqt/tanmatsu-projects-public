@@ -2,7 +2,7 @@ option(SB_NET_RADIO "Compile LoRa driver with regional profiles" ON)
 idf_component_register(
     SRCS "net/crypto.c" "net/wire.c" "net/pairing.c" "net/session.c" "platform/radio.c" "app/versus_run.c" "app/menu.c" "platform/settings.c" "services/preferences.c" "app/local.c" "app/local_run.c" "platform/turn_led.c" "game/rules.c" "game/board.c" "game/placement.c" "game/combat.c"
          "game/ai.c" "game/classic.c" "game/escalated.c" "game/match.c"
-         "services/config.c" "services/storage.c" "app/application.c" "platform/tanmatsu.c" "platform/sdcard.c" "input/input.c" "render/renderer.c" "render/typography.c" "render/font_assets.c" "render/ui.c" "validation/faults.c" "validation/performance.c"
+         "services/config.c" "services/storage.c" "app/application.c" "platform/tanmatsu.c" "platform/launcher.c" "platform/sdcard.c" "input/input.c" "render/renderer.c" "render/typography.c" "render/font_assets.c" "render/ui.c" "validation/faults.c" "validation/performance.c"
     INCLUDE_DIRS "."
     PRIV_REQUIRES badge-bsp pax-gfx esp_lcd fatfs sdmmc esp_driver_sdmmc esp_driver_gpio esp_app_format esp_timer esp_driver_jpeg mbedtls esp_event esp_hw_support tanmatsu-lora esp-hosted-tanmatsu
     EMBED_FILES "assets/loading.jpg" "assets/logoff.jpg" "assets/menu.jpg"

@@ -1,53 +1,27 @@
-# Release notes
+# Current release
 
-The current application is **Release #6**, including the runtime hygiene update
-accepted on hardware on 2026-10-13. The owner reported: “HW test passed. No traces
-of the lag now.”
+Release **6** combines the latest accepted gameplay, GUI, SD ownership/settings,
+reliable LoRa departure, menu rendering and runtime fixes with both the MAC unlock
+and ECC/AppFS handoff repair. The release number remains unchanged.
+`components/spacebattles/release.h` controls the About screen and firmware metadata;
+settings schema and radio protocol versions are independent.
 
-`components/spacebattles/release.h` supplies the release number to the About screen
-and firmware metadata. Settings schema and LoRa protocol versions are independent.
-Release numbers advance only with explicit owner approval; this source export
-does not increment the release number.
+The MAC unlock removes only the hardware-address allowlist and lookup. Board,
+SX1262, exact radio firmware version/hash, region confirmation, configuration
+readback, encryption and airtime pacing remain in force.
 
-## Public-source privacy update, 2026-10-13
+The ECC repair in `platform/launcher.c` restores ECC memory power immediately
+before the BSP launcher restart. See [technical details](LAUNCHER-HANDOFF.md).
 
-Removed the two-device MAC allowlist and its hardware-address lookup. Other
-Tanmatsu units can initialize LoRa when the existing board, SX1262 chip, radio
-firmware version/hash and confirmed region requirements match. Pairing, encryption,
-airtime pacing and protocol versions are unchanged. This source follow-up has not
-received new hardware testing, and the release number remains 6.
+## Verification scope
 
-## Release #6 — runtime hygiene update, 2026-10-13
+The owner accepted the gameplay/GUI fixes through Release 5, and accepted the
+runtime fix and ECC exit fix on 2026-10-13. The inspected ECC capture contained
+two runs of ELF prefix `575bb69ca`, both restoring `0x4 -> 0x2` and loading
+Repository categories, projects and icons successfully. Host/Join role coverage
+comes from the owner's report.
 
-- Original nonblocking input polling and one-tick idle yield retained.
-- Reduced diagnostic logging and faster rendering for menu selection changes.
-- Eleven host suites and the ESP-IDF production build passed before hardware
-  acceptance. No measured power-saving claim is made.
-
-The accepted application binary has SHA-256
-`80f9e1be2befe12722f3450371c45535ceacfebeb102cee15024e37c0f887905`;
-its matching ELF has SHA-256
-`d8ebb180f22f030ef17f9d2a051b3e238dafa1b917b04047d443fb48093c80d2`.
-These identify the historical hardware-tested build. This source distribution
-contains no firmware, debug binaries or device logs; fresh builds may have
-different hashes.
-
-## Release #6 — initial rebuild, 2026-10-12
-
-Updated the release identification after Release #5 acceptance. CMake tracks
-`release.h` so incremental builds refresh firmware metadata when it changes.
-
-## Release #5 — LoRa departure handling, 2026-10-12
-
-Hardware accepted. Secure session exits retry departure until receipt or a
-bounded deadline. Peer departure or connection loss dismisses overlays, displays
-a notice and returns to the main menu automatically. Completed results survive
-departure; authenticated departure is accepted during the rematch key grace period.
-
-## Release #4 — GUI and play-test fixes, 2026-10-12
-
-Hardware accepted. Added the GUI v3 presentation, skipped unchanged LoRa frames,
-removed a redundant full-frame clear and visual clutter, and refreshed peer
-rematch status without requiring local input. Player identity appears once above
-each combat board. Three earlier releases were owner-reported; their numbering
-is not reconstructed from historical build dates.
+On 2026-10-14 the production and manual-upload sources were consolidated,
+compared and built. Current host regression suites passed. No device was connected
+for a new hardware test of the combined MAC-unlocked/ECC-fixed firmware.
+Historical acceptance does not substitute for that test.
